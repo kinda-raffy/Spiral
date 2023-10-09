@@ -334,7 +334,7 @@ MatPoly getSkVec(size_t idx) {
 }
 
 /**
- * @brief Generates the automorphism keys (W_v).
+ * @brief Generates the automorphism keys (W_exp_v).
  * @param[in] g Only used to replace @param stopround if stopround is 0.
  * @param[out] X_v Not used.
  * @param[out] Y_v Not used.

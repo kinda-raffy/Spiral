@@ -1355,6 +1355,25 @@ int main(int argc, char *argv[]) {
 }
 
 // Halve the number of ciphertexts using a single query ciphertext for the 'further' dimensions.
+/**
+ * @brief Halves the number of ciphertexts using a single query ciphertext
+ *        for the 'further' dimensions.
+ * @param[in] cur_dim The current dimension the folding is taking place.
+ * @param[in] num_per The number of elements to fold across.
+ * @param[in] query_ct @see process_query_fast() @param further_dims_query_ct
+ *       @file spiral.cpp for details.
+ * @param[in] query_ct_neg @see process_query_fast() @param further_dims_query_ct_neg
+ *       @file spiral.cpp for details.
+ * @param[in, out] locals Working data container used to hold ciphertexts
+ *       and related variables during query processing.
+ * @returns The folded matrix Regev ciphertext stored in @param locals.
+ *
+ * @details
+ * Uses the Regev-GSW external product to homomorphically multiply in the GSW
+ * ciphertexts encrypting the subsequent queries.
+ *
+ * @see pg. 933, Folding in subsequent dimensions.
+*/
 void foldOneFurtherDimension(
     size_t cur_dim, size_t num_per,
     const uint64_t *query_ct, const uint64_t *query_ct_neg,
@@ -1656,7 +1675,23 @@ void generate_setup_and_query(
 }
 
 /**
- * @brief
+ * @brief Process the query ciphertext against the database and perform
+ *        folding to obtain a single Regev ciphertext.
+ *
+ * @param expansion_query_ct
+ *        @warning Possible bug. Not used.
+ *        @see @param expansion_locals.reoriented_ciphertexts for actual
+ *          query ciphertexts.
+ * @param setup_data Not used.
+ * @param[in] further_dims_query_ct Further dimensions query ciphertext.
+ *      Generated during the GSW expansion phase during @see runConversionImporved()
+ *      @see pg. 933 Folding in subsequent dimensions.
+ * @param[in] further_dims_query_ct_neg A compressed, NTT optimised and negated version
+ *       of the further dimensions query ciphertext.
+ * @param[in, out] expansion_locals Contains the expanded query ciphertexts
+ *       and related data.
+ * @param[in, out] further_dims_locals Allocated space for the 'processing' phase
+ *       of the query. Should be empty. @see doTest() for allocation.
 */
 void process_query_fast(
     const uint64_t *expansion_query_ct,         // expand this ct
@@ -1700,7 +1735,11 @@ void process_query_fast(
     // MARK: Folding in subsequent dimensions.
     while (num_per >= 2) {
         num_per = num_per / 2;
-        foldOneFurtherDimension(cur_dim, num_per, further_dims_query_ct, further_dims_query_ct_neg, further_dims_locals);
+        foldOneFurtherDimension(
+            cur_dim, num_per,
+            further_dims_query_ct,
+            further_dims_query_ct_neg, further_dims_locals
+        );
         cur_dim++;
     }
     time_folding = end_timing();
@@ -2163,8 +2202,29 @@ vector<MatPoly> reorderFromStopround(const vector<MatPoly> &round_cv_v, size_t e
     return copy_v;
 }
 
-// goal: fill expansionLocals.cts with the 'composed' Regev ciphertexts, and g_Q(nttd/crtd) with the
-// converted GSW ciphertexts
+/**
+ * @brief Populates, generates and expands the query.
+ * @param[in, out] expansionLocals @see process_crtd_query().
+ * @param[in] g_Q_nttd The converted (NTT-compliant) query GSW ciphertexts.
+ * @param[in, out] g_Q_crtd The converted (CRT-compliant) query ciphertext.
+ *       @note This should be empty at the start, and will be populated with
+ *       the expanded query ciphertext at the end of this function.
+ *
+ * @details
+ * Completes the following:
+ * - Generates automorpish keys.
+ * - Creates a template query.
+ * - Performs first dimension encoding.
+ * - Performs subsequent dimension encoding.
+ * - Encrypts the query.
+ * - Performs intial query expansion.
+ * - Performs first dimension expansion.
+ * - Performs GSW ciphertext expansion.
+ *
+ * @note Original comments:
+ *  goal: fill expansionLocals.cts with the 'composed' Regev ciphertexts,
+ *  and g_Q(nttd/crtd) with the converted GSW ciphertexts.
+*/
 void runConversionImproved(
     ExpansionLocals expansionLocals,
     uint64_t *g_Q_nttd,
@@ -2234,6 +2294,10 @@ void runConversionImproved(
             if (stopround != 0) {
                 // encode first dimension bits in even coeffs
                 // encode rest of the scalars in odd coeffs
+
+                // MARK: Generate a template query as sigma. Sigma gets processed
+                //       and converted into @param g_Q_crtd at the end of this function.
+                //       sigma > cv > round_cv_v > cv_v > Cp > Cp_raw > g_Q_crtd
                 sigma.data[2*idx_dim0] = (scal_const * (__uint128_t)init_val) % Q_i;
                 for (size_t i = 0; i < further_dims; i++) {
                     uint64_t bit = (idx_further & (1 << i)) >> i;
@@ -2272,7 +2336,7 @@ void runConversionImproved(
                 }
             }
             // Question: Spiral and SpiralStreams uses the same testing function.
-            //           Do we fold over here?
+            //           Do we pack over here?
             if (stopround != 0) {
                 uint64_t inv_2_g_first = inv_mod(1 << g, Q_i);
                 uint64_t inv_2_g_rest = inv_mod(1 << (stopround+1), Q_i);
@@ -2475,6 +2539,25 @@ void runConversionImproved(
     time_conversion += conversion_time;
 }
 
+/**
+ * @brief Performs the end-to-end PIR test of Spiral/SpiralStream.
+ * @param[in, out] expansionLocals Storage container for variables used during
+ *        query expansion.
+ * @param[in, out] furtherDimsLocals Storage container for variables used during
+ *       query processing.
+ * @param g_C_fft_crtd
+ *       @warning Possible bug. @see process_query_fast() @param g_C_fft_crtd
+ * @param g_Q_crtd Single scalar Regev ciphertext representing the client's query
+ *       @related generate_query() @param g_Q_nttd
+ * @param g_Ws_fft Not used.
+ *
+ * @details
+ * Completes the following:
+ * - Latter half of Setup()
+ * - Query()
+ * - Answer()
+ * - Extract()
+*/
 void process_crtd_query(
     ExpansionLocals expansionLocals,
     FurtherDimsLocals furtherDimsLocals,
@@ -2501,7 +2584,8 @@ void process_crtd_query(
     );
 
     start_timing();
-    // NOTE: Perform representation optimisation? Look into this further.
+    // NOTE: Perform representation optimisation and negate further dimensions
+    //       query. Look into this further.
     uint64_t *g_Q_neg_crtd = (uint64_t *)malloc(query_later_inp_cts_crtd_size_bytes);
     #pragma omp parallel for
     for (size_t j = 0; j < further_dims; j++) {
@@ -2532,7 +2616,7 @@ void process_crtd_query(
     free(g_Q_nttd);
     free(g_Q_neg_nttd);
 
-    // WARN: g_C_fft_crtd is ignored over here.
+    // WARN: g_C_fft_crtd from setup is ignored over here.
     uint64_t *g_C_fft = (uint64_t *)malloc(crt_count * query_C_crtd_size_bytes);
 
     record("preprocess query");
@@ -2599,7 +2683,7 @@ void do_test() {
             &g_Ws_fft,          // use this setup data
             false               // no need to compress setup data
         );
-        // Perform test.
+        // MARK: Perform the end-to-end PIR test.
         process_crtd_query(
             expansionLocals,
             furtherDimsLocals,

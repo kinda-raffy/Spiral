@@ -28,11 +28,11 @@ void noise(MatPoly &E) {
 }
 
 /**
- * @brief Generates a secret key.
- * @param S The secret key with an identity sub-matrix.                                         @todo Response?
- * @param Sp The secret key.                                                                    @todo Response? Maybe the identity matrix has to do something with the index?
- * @param sr Represents a noise matrix following a discrete (Guassian) or ternary distribution. @todo Query?
- * @param n_val The size of the identity sub-matrix in S.
+ * @brief Generates the secret key S, s.
+ * @param[in, out] S The response secret key with an identity sub-matrix.                                         @todo Response?
+ * @param[in, out] Sp The response secret key (packed).                                                                    @todo Response? Maybe the identity matrix has to do something with the index?
+ * @param[out] sr The secret key used in query encoding.
+ * @param[in] n_val The size of the identity sub-matrix in S.
  *
  * @details
  * S ∈ Rq^(n+1)×n
@@ -40,7 +40,9 @@ void noise(MatPoly &E) {
  * poly_len is the number of coefficients in a polynomial.
  *      @see values.h
  *      @note RLME uses a poly matrix over a scalar.
- * ternary determines whether the matrix values are either -1, 0, or 1.   @note global
+ * ternary determines whether the matrix values are either -1, 0, or 1
+ *      or follows a discrete (Guassian) distribution.
+ *      @note global
 */
 void keygen(MatPoly &S, MatPoly &Sp, MatPoly &sr, size_t n_val) {
     size_t rs = S.rows; // n0
@@ -69,8 +71,8 @@ void keygen(MatPoly &S, MatPoly &Sp, MatPoly &sr, size_t n_val) {
 
 /**
  * @brief Generates a raw LME sample (public key).
- * @param Sp The private key (no identity matrix).
- * @param m The number of columns in the public key.
+ * @param[in, out] Sp The private key (no identity matrix).
+ * @param[in] m The number of columns in the public key.
  * @return The LME sample where P = (A, b).
  *
  * @details
@@ -233,7 +235,7 @@ MatPoly getRegevPublicKeyMatrix(const MatPoly &s, size_t m) {
 /**
  * @brief Encrypt sigma using the public key.
  * @param sigma The message to be encrypted.
- * @param noise_factor Error.
+ * @param noise_factor The amount of E to be added.
  * @return The ciphertext (P+sigma_padded).
 */
 MatPoly encryptSimpleRegev(MatPoly sigma, size_t noise_factor) {
@@ -331,6 +333,19 @@ MatPoly getSkVec(size_t idx) {
     return s0_1;
 }
 
+/**
+ * @brief Generates the automorphism keys (W_v).
+ * @param[in] g Only used to replace @param stopround if stopround is 0.
+ * @param[out] X_v Not used.
+ * @param[out] Y_v Not used.
+ * @param[out] W_v Not used.
+ * @param[out] W_exp_v The automorphism keys.
+ * @param[in] m_conv The number of columns in the conv gadget.
+ * @param[in] m_exp The number of columns in the exp gadget.
+ * @param[in] for_composition Not used.
+ * @param[in] for_exp Not used.
+ * @param[in] stopround The number of automorphism keys to generate.
+*/
 void getPublicEncryptions(
     size_t g,
     vector<MatPoly> &X_v,

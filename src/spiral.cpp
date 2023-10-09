@@ -2192,7 +2192,8 @@ void runConversionImproved(
                     }
                 }
             }
-
+            // Question: Spiral and SpiralStreams uses the same testing function.
+            //           Do we fold over here?
             if (stopround != 0) {
                 uint64_t inv_2_g_first = inv_mod(1 << g, Q_i);
                 uint64_t inv_2_g_rest = inv_mod(1 << (stopround+1), Q_i);

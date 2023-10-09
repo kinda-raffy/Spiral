@@ -3,8 +3,8 @@ FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y apt-utils build-essential clang-12 git-lfs pkg-config python3 python3-pip cmake curl zip unzip tar ranger && \
-    git lfs install
+    apt-get install -y apt-utils build-essential clang-12 git-lfs pkg-config python3 python3-pip cmake curl zip unzip tar ranger
+    # git lfs install
 
 RUN cd /root && \
     git clone https://github.com/Microsoft/vcpkg.git && \

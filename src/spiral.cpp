@@ -1418,6 +1418,20 @@ void foldOneFurtherDimension(
     record ("crt");
 }
 
+/**
+ * @brief Holds and performs a collection of extracion algorithms.
+ * @param[in] furtherDimsLocals Contains the processed ciphertexts.
+ * @param[in] modswitch_on_server Whether modulus switching is done on the server.
+ *
+ * @details
+ * - Rescales the final encoding (part of modulus switching).
+ * - Recovers a new encoding Z = floor(q1/p) M + E' using the rescaled encoding
+ *   and secret key Sp_mp.
+ * - Decodes Z to get the encoded message C.
+ * - Ensures C is a valid encoding of a plaintext matrix \hat{M}.
+ *
+ * @note A portion of this test would normally be done on the client.
+*/
 double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server) {
     MatPoly ct(n1, n2, false);
 
@@ -1433,7 +1447,9 @@ double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server
         for (size_t i = 0; i < n1 * n2 * poly_len; i++) {
             ct.data[i] = furtherDimsLocals.cts[i];
         }
-        // MARK: decode Z
+        // IGNORE FOR NOW.
+        // MARK: Decode the ciphertexts directly if modulus switching
+        //       is done on the client.
         dec_compressed(r_end, to_ntt(ct), to_ntt(S_mp), scale_k);
     } else {
         start_timing();
@@ -1447,6 +1463,11 @@ double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server
         }
         uint64_t q_1 = 4*p_db;
 
+        // MARK: Rescale the final encoding (PIR response)
+        //       to a smaller ring Rq' to obtain compact representation.
+        // @note Rescaling the Regev ciphertext is done in two components,
+        //       each with their seperate modulus q1, q2
+        //       @see pg. 936, D. Modulus Switching.
         MatPoly first_row = pick(ct_inp, 0, 0, 1, ct_inp.cols);
         MatPoly first_row_sw = getRescaled(first_row, Q_i, arb_qprime);
         MatPoly rest_rows = pick(ct_inp, 1, 0, ct_inp.rows - 1, ct_inp.cols);
@@ -1458,11 +1479,21 @@ double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server
         // ~~transmit~~
 
         start_timing();
+        // MARK: Recover takes in the rescaled encoding and the secret key
+        //       and output a new encoding Z = floor(q1/p) M + E'.
         MatPoly first_row_decoded = pick(total_resp, 0, 0, 1, total_resp.cols);
         MatPoly rest_rows_decoded = pick(total_resp, 1, 0, total_resp.rows - 1, total_resp.cols);
         to_ntt_qprime(first_row_decoded);
         MatPoly s_prod = mul_over_qprime(Sp_mp_nttd_qprime, first_row_decoded);
-        from_ntt_qprime(s_prod);
+        from_ntt_qprime(s_prod);  // Z.
+
+        // MARK: Decode(S\topC) operation to get the encoded message.
+        // @details
+        // If E' is sufficently small, then we can recover M from Z.
+        // Recovers M by computing p/q\dotS\topC and rounding to the nearest integer.
+        //
+        // @note C is a redundant encoding of a plaintext matrix \hat{M}.
+        // @see pg 934, Col 2, Paragraph 3.
         for (size_t i = 0; i < s_prod.rows * s_prod.cols * poly_len; i++) {
             int64_t val_first = s_prod.data[i];
             if (val_first >= arb_qprime/2) val_first -= arb_qprime;
@@ -1481,7 +1512,7 @@ double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server
 
             s_prod.data[i] = (uint64_t)result;
         }
-        M_result = s_prod;
+        M_result = s_prod;  // M.
         time_decoding += end_timing();
     }
 
@@ -1500,6 +1531,8 @@ double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server
 
     // cop(M_result, r_end);//, 0, 1);
 
+    // MARK: Check correctness. If E' is too large, then the message would
+    //       be irretrievable.
     cout << "Is correct?: " << is_eq(corr, M_result) << endl;
     if (show_diff) {
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
@@ -1523,6 +1556,7 @@ double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server
     // double log_var = get_log_var(Z_uncrtd, scaled_pt, show_diff, arb_qprime);
     // cout << "variance of diff: 2^" << log_var << endl;
 
+    // MARK: On error, output the diffs into a file for debugging.
     if (output_err) {
         for (size_t i = 0; i < n1 * n2 * poly_len; i++) {
             ct.data[i] = furtherDimsLocals.cts[i];
@@ -1552,7 +1586,7 @@ double check_final(FurtherDimsLocals furtherDimsLocals, bool modswitch_on_server
  *      @see pg. 935 ScalToMatSetup
  * @param encodeCompressedSetupData  Whether to encode the setup data.
  *      @warning not implemented here.
- * @param setNewSecret Whether to set a new secret key.
+ * @param[in] setNewSecret Whether to create a new secret key.
  * @param num_expansions_h Number of expansions to use.
  * @param G The gadget matrix.
 */
@@ -1569,6 +1603,7 @@ void generate_setup(
         sr_mp = MatPoly(1, 1, false);
 
         start_timing();
+        // MARK: Create keys.
         keygen(S_mp, Sp_mp, sr_mp);
         time_key_gen += end_timing();
     }
@@ -1579,10 +1614,10 @@ void generate_setup(
 /**
  * @brief Allocates heap space for client query.
  * @param idx index to search.  @warning Not used here.
- * @param g_C_fft_crtd
- *      @warning Possible bug. Ignored during query processing. Otherwise, this was
- *               meant to be the ciphertext that got expanded.
- * @param g_Q_crtd Single scalar Regev ciphertext representing the client's query.
+ * @param[out] g_C_fft_crtd
+ *      @warning Possible bug. Ignored and overwritten during query processing.
+ *               Otherwise, this was meant to be the ciphertext that got expanded.
+ * @param[out] g_Q_crtd Single scalar Regev ciphertext representing the client's query.
  *      @see pg.932 Query Generation.
 */
 void generate_query(
@@ -1595,12 +1630,12 @@ void generate_query(
 }
 
 /**
- * @brief Handler for setting up and executing a pre-determined query for testing.
+ * @brief Handler for server setup for query testing.
  * @param idx index to search.
  *      @see generate_query()
- * @param g_C_fft_crtd
+ * @param[out] g_C_fft_crtd
  *      @see generate_query()
- * @param g_Q_crtd
+ * @param[out] g_Q_crtd
  *      @see generate_query()
  * @param g_Ws_fft
  *      @see generate_setup()
@@ -1620,6 +1655,9 @@ void generate_setup_and_query(
     );
 }
 
+/**
+ * @brief
+*/
 void process_query_fast(
     const uint64_t *expansion_query_ct,         // expand this ct
     const uint64_t *setup_data,
@@ -1650,7 +1688,7 @@ void process_query_fast(
         dim0,
         num_per
     );
-    // MARK: Get rid of NTT and CRT.
+    // NOTE: Remove NTT and CRT formatting.
     nttInvAndCrtLiftCiphertexts(
         num_per,
         further_dims_locals
@@ -1703,6 +1741,9 @@ void buildSpacedIdentity(size_t offs, MatPoly &G) {
 }
 
 /**
+ * @brief Performs the initial expansion on the query ciphertext using the
+ *        coefficent expansino algortihm.
+ *
  * @param cv_v The query ciphertext.
  * @param W_left_v The left half of automorphism keys (W0, ...).
  * @param W_right_v The right half of automorphism keys (..., Wp-1).
@@ -1896,11 +1937,31 @@ static void special_distribute(MatPoly &out, const MatPoly &a) {
     }
 }
 
+/**
+ * @brief Takes a Regev ciphertext encrypting a bit x \in {0, 1} and outputs
+ *        a matrix Regev ciphertext that encrpyts the matrix xIn, where In is
+ *        the n x n identity matrix.
+ * @param[out] out_reg The output Regev ciphertext.
+ * @param[in] cv The input Regev ciphertext encrypting a bit.
+ * @param[in] W The key-switching matrix.
+ * @param[in] cv_0 Scratch matrix.
+ * @param[in] cv_1 Scratch matrix.
+ * @param[in] cv_ntti Scratch matrix.
+ * @param[in] square_cv Scratch matrix.
+ * @param[in] ginv_c Scratch matrix.
+ * @param[in] ginv_c_nttd Scratch matrix.
+ * @param[in] prod_W_ginv Scratch matrix.
+ * @param[in] padded_cv_1 Scratch matrix.
+ * @param[in] ginv_c_raw Scratch matrix.
+ * @param[in] ginv_c_raw_nttd Scratch matrix.
+ *
+ * @see Section 2.A, Appendix B.
+*/
 void scalToMat(
     size_t m_conv,
     MatPoly &out_reg,               // n1 x n0
     const MatPoly &cv,              // n0 x 1
-    const MatPoly &W,                // n1 x (n0 * m_conv)
+    const MatPoly &W,               // n1 x (n0 * m_conv)
     MatPoly &cv_0,
     MatPoly &cv_1,
     MatPoly &cv_ntti,
@@ -1937,7 +1998,7 @@ void scalToMatFast(
     size_t m_conv,
     MatPoly &out_reg,               // n1 x n0
     const MatPoly &cv,              // n0 x 1
-    const MatPoly &W,                // n1 x (n0 * m_conv)
+    const MatPoly &W,               // n1 x (n0 * m_conv)
     MatPoly &cv_0,
     MatPoly &cv_1,
     MatPoly &ginv_c,
@@ -2031,6 +2092,24 @@ void scalToMatFast(
     );
 }
 
+/**
+ * @brief Takes the decoposition dimension t_GSW Regev Encodings
+ *        and outputs a single GSW encoding.
+ * @param[in] m_conv The number of columns in the matrix.
+ * @param[in] t The number of iterations.
+ * @param[out] out The output GSW encoding.
+ * @param[in] cv_v The input Regev encodings.
+ * @param[in] cv_v_offset The offset into @param cv_v.
+ * @param[in] W The key-switching matrix.
+ * @param[in] V @see pg. 936, 2nd point.
+ *
+ * @details
+ * t_GSW encodings consists of 2 \dot t_GSW elements of Rq.
+ * Output GSW encoding is of the form:
+ *        (n+1)m_GSW = (n+1)^2t_GSW
+ *
+ * @see pg. 936, Remark 3.1.
+*/
 void regevToGSW(
     size_t m_conv, size_t t, MatPoly &out,
     const vector<MatPoly> &cv_v, size_t cv_v_offset, const MatPoly &W, const MatPoly &V
@@ -2138,7 +2217,7 @@ void runConversionImproved(
         vector<MatPoly> X_v, Y_v, W_v, W_exp_v;
 
         start_timing();
-        // MARK: Generate automorphism keys.
+        // MARK: Generate automorphism keys (W0, ..., Wp-1) as W_exp_right_v and W_exp_v.
         getPublicEncryptions(g, dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_right_v, m_conv, m_exp_right, false, true, stopround > 0 ? stopround+1 : 0);
         getPublicEncryptions(g, dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_v, m_conv, m_exp, false, true);
         time_key_gen += end_timing();
@@ -2282,7 +2361,7 @@ void runConversionImproved(
     time_key_gen += end_timing();
     add_pub_param(W);
 
-    // Mark: First dimension expansion.
+    // MARK: First dimension expansion.
     start_timing();
     for (size_t i = 0; i < num_expanded; i++) {
         scalToMat(
@@ -2328,13 +2407,14 @@ void runConversionImproved(
     MatPoly Cp(n1, m);
     MatPoly Cp_raw(n1, m, false);
 
-    // WARN: Gadget matrix is not used.
+    // WARN: Redundant? Gadget matrix is not used.
     MatPoly G(n1, m, false);
     buildGadget(G);
     MatPoly G_nttd = to_ntt(G);
 
-    // NOTE: Required for GSW expansion.
     // Generate V
+    // NOTE: V creates a part of the conversion key ck and is
+    //       required for GSW expansion.
     size_t m_conv_2 = m_conv * 2;
     MatPoly V(n1, m_conv_2);
     MatPoly Sp_mp_ntt = to_ntt(Sp_mp);
@@ -2421,6 +2501,7 @@ void process_crtd_query(
     );
 
     start_timing();
+    // NOTE: Perform representation optimisation? Look into this further.
     uint64_t *g_Q_neg_crtd = (uint64_t *)malloc(query_later_inp_cts_crtd_size_bytes);
     #pragma omp parallel for
     for (size_t j = 0; j < further_dims; j++) {
@@ -2456,6 +2537,7 @@ void process_crtd_query(
 
     record("preprocess query");
 
+    // MARK: Process the query.
     process_query_fast(
         g_C_fft,      // expand this ct
         g_Ws_fft,
@@ -2468,6 +2550,13 @@ void process_crtd_query(
     cout << "Done with query processing!" << endl;
 }
 
+/**
+ * @brief Performs an end-to-end PIR test of the basic Spiral/SpiralStream
+ *        scheme.
+ *
+ * @note SpiralPack is not tested here, but in @file testing.cpp
+ *       @see testHighRate()
+*/
 void do_test() {
     // =====================================================================
     // do setup
@@ -2480,9 +2569,10 @@ void do_test() {
     if (total_n % dim0 != 0)
         exit(1);
 
+    // MARK: Allocate heap space to hold ciphertexts and related data during
+    //       the expansion and folding process.
     ExpansionLocals expansionLocals;
     expansionLocals.allocate();
-
     FurtherDimsLocals furtherDimsLocals(num_per);
     furtherDimsLocals.allocate();
 
@@ -2493,6 +2583,7 @@ void do_test() {
     // generate query and setup data
     // =====================================================================
 
+    // MARK: Indicate the number of runs to perform.
     size_t num_trials = 1;
     checking_for_debug = true;
     std::vector<double> vars;
@@ -2500,6 +2591,7 @@ void do_test() {
         uint64_t *g_C_fft_crtd;
         uint64_t *g_Q_crtd;
         uint64_t *g_Ws_fft;
+        // MARK: Initialise the server for testing.
         generate_setup_and_query(
             IDX_TARGET,
             &g_C_fft_crtd,      // expand this ct
@@ -2507,7 +2599,7 @@ void do_test() {
             &g_Ws_fft,          // use this setup data
             false               // no need to compress setup data
         );
-
+        // Perform test.
         process_crtd_query(
             expansionLocals,
             furtherDimsLocals,
@@ -2521,6 +2613,7 @@ void do_test() {
             if (modswitch_on_server) {
                 // MARK: Modulus Switching.
                 modswitch(furtherDimsLocals.result, furtherDimsLocals.cts);
+                // MARK: Decoding.
                 log_var = check_final(furtherDimsLocals, modswitch_on_server);
             } else {
                 log_var = check_final(furtherDimsLocals, modswitch_on_server);

@@ -1,14 +1,16 @@
 cmake_minimum_required(VERSION 3.12)
 
-set(CMAKE_BUILD_TYPE "Release")
+#set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_C_COMPILER clang++-12)
 set(CMAKE_CXX_COMPILER clang++-12)
 
-project(spiral VERSION 0.1 LANGUAGES CXX)
+ project(spiral VERSION 0.1 LANGUAGES CXX)
 
 # CXX options
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "-g -O3 -std=c++17 -MD -march=native")
+# WARN: Change this to -O3 for release
+set(CMAKE_CXX_FLAGS_RELEASE "-g -O0 -std=c++17 -MD -march=native")
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O3 -std=c++17 -MD -march=native")
 
 option(NOAVX512 "Disable AVX-512" OFF)
 option(NOAVX2 "Disable AVX2" OFF)
@@ -30,7 +32,9 @@ set(SRC_FILES src/spiral.cpp src/core.cpp src/constants.cpp src/poly.cpp src/uti
 set(HEADER_FILES include/spiral.h include/core.h include/constants.h include/poly.h include/util.h include/client.h include/testing.h)
 add_executable(spiral ${SRC_FILES} ${HEADER_FILES})
 target_include_directories(spiral PUBLIC include)
-target_include_directories(spiral PUBLIC /home/$ENV{USER}/vcpkg/installed/)
+#target_include_directories(spiral PUBLIC /home/$ENV{USER}/vcpkg/installed/)
+# Case: Create image under ubuntu user but run container under root.
+target_include_directories(spiral PUBLIC /home/ubuntu/vcpkg/installed/)
 
 # Must specify:
 # -DCMAKE_TOOLCHAIN_FILE=/home/ubuntu/vcpkg/scripts/buildsystems/vcpkg.cmake

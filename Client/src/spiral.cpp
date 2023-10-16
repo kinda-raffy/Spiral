@@ -213,6 +213,10 @@ static void add_pub_param(const MatPoly &mat) {
     total_offline_size_b += mat.rows * mat.cols * poly_len * logQ / 8;
 }
 
+/**
+ * @brief For each element in the vector, calculate offline size
+ *          in bytes and add it to a global count.
+ */
 static void add_pub_param(const vector<MatPoly> &vec) {
     for (size_t i = 0; i < vec.size(); i++) {
         add_pub_param(vec[i]);
@@ -1182,6 +1186,7 @@ void load_db() {
 
 void do_test();
 void do_server();
+void setup_main();
 
 #ifdef MAKE_QUERY
 void make_query();
@@ -1350,7 +1355,8 @@ int main(int argc, char *argv[]) {
 
     load_db();
 
-    do_test();
+    // do_test();
+    setup_main();
     #endif
 }
 
@@ -2171,6 +2177,7 @@ void regevToGSW(
         to_ntt_no_reduce(cv, ginv_tmp);
         place(ginv_Chat_nttd, cv, 0, i);
 
+        // MARK: Compute C_i <- ScalToMat(W, c_i) for each i \in [t_GSW]
         scalToMatFast(m_conv, scalToMatResult, cv_v[cv_v_offset + i], cv, W);
         place(result, scalToMatResult, 0, t + (n0 * i));
 
@@ -2182,6 +2189,12 @@ void regevToGSW(
     multiply(prod, V, ginv_Chat_nttd);
     place(result, prod, 0, 0);
 
+    // MARK: Apply the permutation matrix?
+    // NOTE: Need to double-check.
+    //       The permutation matrix intends to rearrange the rows of
+    //       the left-hand side matrix so that it becomes equal to G_n+1,z_GSW
+    //       on the right-hand side.
+    // @see pg. 936, 2nd dot point.
     // permute
     for (size_t i = 0; i < t; i++) {
         cop(result_permuted, result, 0, i, 0, (n0+1)*i, n1, 1);
@@ -2274,12 +2287,20 @@ void runConversionImproved(
         cout << "stopround = " << stopround << endl;
 
         vector<MatPoly> dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_right_v;
+        // WARN: X_v, Y_v, W_v is not used.
         vector<MatPoly> X_v, Y_v, W_v, W_exp_v;
 
         start_timing();
         // MARK: Generate automorphism keys (W0, ..., Wp-1) as W_exp_right_v and W_exp_v.
-        getPublicEncryptions(g, dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_right_v, m_conv, m_exp_right, false, true, stopround > 0 ? stopround+1 : 0);
-        getPublicEncryptions(g, dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_v, m_conv, m_exp, false, true);
+        getPublicEncryptions(
+            g, dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_right_v,
+            m_conv, m_exp_right, false, true,
+            stopround > 0 ? stopround+1 : 0
+        );
+        getPublicEncryptions(
+            g, dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_v,
+            m_conv, m_exp, false, true
+        );
         time_key_gen += end_timing();
         add_pub_param(W_exp_right_v);
         add_pub_param(W_exp_v);
@@ -2335,7 +2356,7 @@ void runConversionImproved(
                     }
                 }
             }
-            // Question: Spiral and SpiralStreams uses the same testing function.
+            // Question: Spiral and SpiralStream uses the same testing function.
             //           Do we pack over here?
             if (stopround != 0) {
                 uint64_t inv_2_g_first = inv_mod(1 << g, Q_i);
@@ -2362,7 +2383,11 @@ void runConversionImproved(
             time_query_gen += end_timing();
 
             // MARK: Initial Expansion.
-            double quick_expansion_time = expandImproved(round_cv_v, g, m_exp, W_exp_v, W_exp_right_v, ell * further_dims, stopround);
+            double quick_expansion_time = expandImproved(
+                round_cv_v, g, m_exp,
+                W_exp_v, W_exp_right_v,
+                ell * further_dims, stopround
+            );
             total_time += quick_expansion_time;
 
             // reorder ciphertexts if using stopround
@@ -2412,6 +2437,9 @@ void runConversionImproved(
     MatPoly ginv_c_raw(m_conv, 1, false);
     MatPoly ginv_c_raw_nttd(m_conv, 1);
 
+    // MARK: ScalToMatSetup to find W. Part of RegevToGSWSetup
+    //       to retrieve the conversion key.
+    // @see pg. 935, Section A.
     size_t m_conv_n0 = n0 * m_conv;
     MatPoly G_scale = buildGadget(n0, m_conv_n0);
     MatPoly s0 = sr_mp;
@@ -2458,42 +2486,45 @@ void runConversionImproved(
     // getPublicEncryptions(1, X_v, Y_v, W_v, W_exp_v, m_conv, m_exp);
     // Run 'conversion'
     MatPoly c_ntti(n0, 1, false);           // n0 x 1
-    MatPoly W_switched(n0, 1);              // n0 x 1, ntt
-    MatPoly Y_switched(n0, 1);              // n0 x 1, ntt
-    MatPoly C_v_0(n0, m);                   // n0 x m, ntt
-    MatPoly C_v_1(n0, m);                   // n0 x m, ntt
+    MatPoly W_switched(n0, 1);                       // n0 x 1, ntt
+    MatPoly Y_switched(n0, 1);                       // n0 x 1, ntt
+    MatPoly C_v_0(n0, m);                            // n0 x m, ntt
+    MatPoly C_v_1(n0, m);                            // n0 x m, ntt
     MatPoly C_v_0_ntti(n0, m, false);       // n0 x m
     MatPoly C_v_1_ntti(n0, m, false);       // n0 x m
     MatPoly ginv_Ct(m_conv, m, false);      // m_conv x m
-    MatPoly ginv_Ct_ntt(m_conv, m);         // m_conv x m, ntt
-    MatPoly prod0(n1, m);                   // n1 x m, ntt
-    MatPoly prod1(n1, m);                   // n1 x m, ntt
+    MatPoly ginv_Ct_ntt(m_conv, m);                  // m_conv x m, ntt
+    MatPoly prod0(n1, m);                            // n1 x m, ntt
+    MatPoly prod1(n1, m);                            // n1 x m, ntt
     MatPoly Cp(n1, m);
     MatPoly Cp_raw(n1, m, false);
 
-    // WARN: Redundant? Gadget matrix is not used.
+    // WARN: Redundant. Gadget matrix is not used.
     MatPoly G(n1, m, false);
     buildGadget(G);
     MatPoly G_nttd = to_ntt(G);
 
-    // Generate V
-    // NOTE: V creates a part of the conversion key ck and is
-    //       required for GSW expansion.
+    // MARK: Calculate V. Part of RegevToGSWSetup
+    //       to retrieve the conversion key.
     size_t m_conv_2 = m_conv * 2;
     MatPoly V(n1, m_conv_2);
     MatPoly Sp_mp_ntt = to_ntt(Sp_mp);
     start_timing();
     {
         MatPoly gv = to_ntt(buildGadget(1, m_conv));
+        // NOTE: Sp_mp is s_gsw.
         MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_mp, m_conv_2));
         // MatPoly P(n1, m_conv_2);
+        // NOTE: s0 = sr_mp = s_regev. s0 * g_z_conv.
         MatPoly scaled_gv = mul_by_const(to_ntt(s0), gv);
         MatPoly together(1, m_conv_2);
         place(together, scaled_gv, 0, 0);
         place(together, gv, 0, m_conv);
+        // NOTE: -s_gsw * (s0 * g_z_conv)
         MatPoly result = multiply(Sp_mp_ntt, together);
         MatPoly result_padded(n1, m_conv_2);
         place(result_padded, result, 1, 0);
+        // NOTE: s_gsw_public + [s_gsw * (s0 * g_z_conv)]
         add(V, P, result_padded);
     }
     time_key_gen += end_timing();
@@ -2511,6 +2542,7 @@ void runConversionImproved(
         }
         time_query_gen += end_timing();
     } else {
+        // MARK: Look into this.
         add_pub_param(V);
     }
 
@@ -2708,4 +2740,166 @@ void do_test() {
 
         print_summary();
     }
+}
+
+void print_keys(MatPoly& S, MatPoly& Sp, MatPoly& sr) {
+    std::cout << "Printing sr: ";
+    for (size_t m = 0; m < poly_len; ++m) {
+        std::cout << sr.data[m] << " ";
+    }
+    std::cout << std::endl;
+
+    std::cout << "Printing S:" << std::endl;
+    for (size_t r = 0; r < S.rows; ++r) {
+        for (size_t c = 0; c < S.cols; ++c) {
+            for (size_t m = 0; m < poly_len; ++m) {
+                uint64_t val = S.data[r * S.cols * poly_len + c * poly_len + m];
+                std::cout << val << " ";
+            }
+            std::cout << "| "; // Column separator.
+        }
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+
+    std::cout << "Printing Sp:" << std::endl;
+    for (size_t r = 0; r < Sp.rows; ++r) {
+        for (size_t c = 0; c < Sp.cols; ++c) {
+            for (size_t m = 0; m < poly_len; ++m) {
+                uint64_t val = Sp.data[r * Sp.cols * poly_len + c * poly_len + m];
+                std::cout << val << " ";
+            }
+            std::cout << "| "; // Column separator.
+        }
+        std::cout << std::endl;
+    }
+}
+
+void saveKeysToFile(const MatPoly &S, const MatPoly &Sp, const MatPoly &sr, const std::string &fileName) {
+    std::cout << "Saving keys to file: " << fileName << std::endl;
+    std::ofstream outFile(fileName, std::ios::out | std::ios::binary);
+    if (!outFile.is_open()) {
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
+        return;
+    }
+
+    // Function to write MatPoly data to the file
+    auto writeMatPoly = [&outFile](const MatPoly &mat) {
+        outFile.write(reinterpret_cast<const char*>(&mat.rows), sizeof(mat.rows));
+        outFile.write(reinterpret_cast<const char*>(&mat.cols), sizeof(mat.cols));
+        outFile.write(reinterpret_cast<const char*>(&mat.isNTT), sizeof(mat.isNTT));
+
+        size_t dataSize = mat.rows * mat.cols * (mat.isNTT ? crt_count : 1) * coeff_count;
+        outFile.write(reinterpret_cast<const char*>(mat.data), dataSize * sizeof(uint64_t));
+    };
+
+    // Write S, Sp and sr to the file
+    writeMatPoly(S);
+    writeMatPoly(Sp);
+    writeMatPoly(sr);
+
+    if (!outFile.good()) {
+        std::cerr << "An error occurred while writing to the file: " << fileName << std::endl;
+    }
+
+    outFile.close();
+    std::cout << "Keys saved successfully." << std::endl;
+}
+
+void loadKeysFromFile(MatPoly &S, MatPoly &Sp, MatPoly &sr, const std::string &fileName) {
+    std::cout << "Loading keys from file: " << fileName << std::endl;
+    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
+    if (!inFile.is_open()) {
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
+        return;
+    }
+
+    // Function to read MatPoly data from the file
+    auto readMatPoly = [&inFile](MatPoly &mat) {
+        inFile.read(reinterpret_cast<char*>(&mat.rows), sizeof(mat.rows));
+        inFile.read(reinterpret_cast<char*>(&mat.cols), sizeof(mat.cols));
+        inFile.read(reinterpret_cast<char*>(&mat.isNTT), sizeof(mat.isNTT));
+
+        size_t dataSize = mat.rows * mat.cols * (mat.isNTT ? crt_count : 1) * coeff_count;
+        if (mat.data != nullptr) {
+            free(mat.data);
+        }
+        mat.data = (uint64_t*) calloc(dataSize, sizeof(uint64_t));
+        inFile.read(reinterpret_cast<char*>(mat.data), dataSize * sizeof(uint64_t));
+    };
+
+    // Read S, Sp, and sr from the file
+    readMatPoly(S);
+    readMatPoly(Sp);
+    readMatPoly(sr);
+
+    if (!inFile.good()) {
+        std::cerr << "An error occurred while reading from the file: " << fileName << std::endl;
+    }
+
+    inFile.close();
+
+    std::cout << "Keys loaded successfully." << std::endl;
+}
+
+bool areKeysEqual(const MatPoly &S1, const MatPoly &Sp1, const MatPoly &sr1,
+                  const MatPoly &S2, const MatPoly &Sp2, const MatPoly &sr2) {
+
+    auto compareMatPoly = [](const MatPoly &mat1, const MatPoly &mat2) -> bool {
+        if (mat1.rows != mat2.rows || mat1.cols != mat2.cols || mat1.isNTT != mat2.isNTT) {
+            return false;
+        }
+        size_t dataSize = mat1.rows * mat1.cols * (mat1.isNTT ? crt_count : 1) * coeff_count;
+        return memcmp(mat1.data, mat2.data, dataSize * sizeof(uint64_t)) == 0;
+    };
+
+    return compareMatPoly(S1, S2) && compareMatPoly(Sp1, Sp2) && compareMatPoly(sr1, sr2);
+}
+
+/**
+ * @brief Save S, Sp, sr and automorphism keys as a JSON file.
+ */
+void setup_main() {
+    do_test();
+    exit(0);
+
+    // Create response and gsw secret keys.
+    MatPoly S_Setup, Sp_Setup, sr_Setup;
+    S_Setup = MatPoly(n0, n1, false);
+    Sp_Setup = MatPoly(n0, k_param, false);
+    sr_Setup = MatPoly(1, 1, false);
+
+    keygen(S_Setup, Sp_Setup, sr_Setup);
+
+    // Write keys to file.
+    saveKeysToFile(S_Setup, Sp_Setup, sr_Setup, "keys.bin");
+
+    MatPoly S_Setup_Load, Sp_Setup_Load, sr_Setup_Load;
+    S_Setup_Load = MatPoly(n0, n1, false);
+    Sp_Setup_Load = MatPoly(n0, k_param, false);
+    sr_Setup_Load = MatPoly(1, 1, false);
+
+    loadKeysFromFile(S_Setup_Load, Sp_Setup_Load, sr_Setup_Load, "keys.bin");
+
+    bool areEqual = areKeysEqual(S_Setup, Sp_Setup, sr_Setup, S_Setup_Load, Sp_Setup_Load, sr_Setup_Load);
+    std::cout << (areEqual ? "Keys are equal." : "Keys are not equal") << std::endl;
+
+    // Create automorphism keys.
+    size_t num_expanded = 1 << num_expansions;
+    size_t m = m2;
+    size_t ell = m / n1;
+    size_t num_bits_to_gen = ell * further_dims + num_expanded;
+    auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
+    size_t qe_rest = query_elems_rest;
+    size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
+    if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
+
+    vector<MatPoly> dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_right_v, W_exp_v;
+    setup_GetPublicEncryptions(
+        g, sr_Setup_Load, W_exp_right_v,
+        m_exp_right, stopround > 0 ? stopround+1 : 0
+    );
+    setup_GetPublicEncryptions(
+        g, sr_Setup_Load, W_exp_v, m_exp
+    );
 }

@@ -29,8 +29,8 @@ void noise(MatPoly &E) {
 
 /**
  * @brief Generates the secret key S, s.
- * @param[in, out] S The response secret key with an identity sub-matrix.                                         @todo Response?
- * @param[in, out] Sp The response secret key (packed).                                                                    @todo Response? Maybe the identity matrix has to do something with the index?
+ * @param[in, out] S The response secret key with an identity sub-matrix. Used only in @see check_final.
+ * @param[in, out] Sp The response secret key (packed). Used during conversion @see runConversion.
  * @param[out] sr The secret key used in query encoding.
  * @param[in] n_val The size of the identity sub-matrix in S.
  *
@@ -413,4 +413,26 @@ void getPublicEncryptions(
     //     W_v.push_back(W_i);
     //     total_offline_query_size += W_i.rows * W_i.cols * coeff_count * logQ / 8;
     // }
+}
+
+void setup_GetPublicEncryptions(
+    size_t g,
+    MatPoly sr,
+    vector<MatPoly> &W_exp_v,
+    size_t m_exp,
+    size_t stopround
+) {
+    MatPoly G_exp = buildGadget(1, m_exp);
+    MatPoly G_exp_nttd = to_ntt(G_exp);
+
+    for (size_t i = 0; i < (stopround == 0 ? g : stopround); i++) {
+        size_t t = (poly_len / (1 << i)) + 1;
+        // NOTE: Look into this further.
+        // MARK: Create automorphism keys using the query secret key.
+        MatPoly tau_s0 = automorph(sr, t);
+        size_t noise_factor = 1;// << (g - i);
+
+        MatPoly W_exp_i = encryptSimpleRegevMatrix(sr, multiply(tau_s0, G_exp_nttd), noise_factor);
+        W_exp_v.push_back(W_exp_i);
+    }
 }

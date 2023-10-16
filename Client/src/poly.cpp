@@ -437,7 +437,6 @@ void cop(
     assert(s_col + num_col <= a.cols);
 
     size_t factor = (out.isNTT) ? crt_count : 1;
-
     for (size_t r = 0; r < num_row; r++) {
         for (size_t c = 0; c < num_col; c++) {
             memcpy(

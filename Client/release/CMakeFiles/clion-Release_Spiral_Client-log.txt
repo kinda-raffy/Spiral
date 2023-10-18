@@ -3,5 +3,3 @@
 -- Configuring done
 -- Generating done
 -- Build files have been written to: /tmp/Client/release
-CMake File API: java.util.concurrent.ExecutionException: com.github.dockerjava.api.exception.NotFoundException: Status 404: {"message":"No such container: 13c9c0fd891e673f1a8f229fb9fd9839ed3988a4a6ccbe8c4db6bc6eed148cb2"}
-

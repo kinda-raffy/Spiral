@@ -1186,7 +1186,7 @@ void load_db() {
 
 void do_test();
 void do_server();
-void setup_main();
+void perform_tests();
 
 #ifdef MAKE_QUERY
 void make_query();
@@ -1356,7 +1356,8 @@ int main(int argc, char *argv[]) {
     load_db();
 
     // do_test();
-    setup_main();
+    // setup_main();
+    perform_tests();
     #endif
 }
 
@@ -2225,12 +2226,12 @@ vector<MatPoly> reorderFromStopround(const vector<MatPoly> &round_cv_v, size_t e
  *
  * @details
  * Completes the following:
- * - Generates automorpish keys.
+ * - Generates automorphism keys.
  * - Creates a template query.
  * - Performs first dimension encoding.
  * - Performs subsequent dimension encoding.
  * - Encrypts the query.
- * - Performs intial query expansion.
+ * - Performs initial query expansion.
  * - Performs first dimension expansion.
  * - Performs GSW ciphertext expansion.
  *
@@ -2775,15 +2776,14 @@ void print_keys(MatPoly& S, MatPoly& Sp, MatPoly& sr) {
     }
 }
 
-void saveKeysToFile(const MatPoly &S, const MatPoly &Sp, const MatPoly &sr, const std::string &fileName) {
-    std::cout << "Saving keys to file: " << fileName << std::endl;
+void saveKeysToFile(const std::vector<MatPoly>& keyArray, const std::string &fileName) {
+    std::cout << "Saving an array of keys to file: " << fileName << std::endl;
     std::ofstream outFile(fileName, std::ios::out | std::ios::binary);
     if (!outFile.is_open()) {
         std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
 
-    // Function to write MatPoly data to the file
     auto writeMatPoly = [&outFile](const MatPoly &mat) {
         outFile.write(reinterpret_cast<const char*>(&mat.rows), sizeof(mat.rows));
         outFile.write(reinterpret_cast<const char*>(&mat.cols), sizeof(mat.cols));
@@ -2793,28 +2793,22 @@ void saveKeysToFile(const MatPoly &S, const MatPoly &Sp, const MatPoly &sr, cons
         outFile.write(reinterpret_cast<const char*>(mat.data), dataSize * sizeof(uint64_t));
     };
 
-    // Write S, Sp and sr to the file
-    writeMatPoly(S);
-    writeMatPoly(Sp);
-    writeMatPoly(sr);
+    for (const auto & key: keyArray) {
+        writeMatPoly(key);
+    }
 
     if (!outFile.good()) {
         std::cerr << "An error occurred while writing to the file: " << fileName << std::endl;
     }
 
     outFile.close();
-    std::cout << "Keys saved successfully." << std::endl;
+    std::cout << "Key array saved successfully." << std::endl;
 }
 
-void loadKeysFromFile(MatPoly &S, MatPoly &Sp, MatPoly &sr, const std::string &fileName) {
-    std::cout << "Loading keys from file: " << fileName << std::endl;
-    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
-    if (!inFile.is_open()) {
-        std::cerr << "Failed to open the file: " << fileName << std::endl;
-        return;
-    }
-
-    // Function to read MatPoly data from the file
+void readKeysFromStream(
+        std::ifstream& inFile,
+        std::initializer_list<std::reference_wrapper<MatPoly>> mats
+    ) {
     auto readMatPoly = [&inFile](MatPoly &mat) {
         inFile.read(reinterpret_cast<char*>(&mat.rows), sizeof(mat.rows));
         inFile.read(reinterpret_cast<char*>(&mat.cols), sizeof(mat.cols));
@@ -2828,23 +2822,49 @@ void loadKeysFromFile(MatPoly &S, MatPoly &Sp, MatPoly &sr, const std::string &f
         inFile.read(reinterpret_cast<char*>(mat.data), dataSize * sizeof(uint64_t));
     };
 
-    // Read S, Sp, and sr from the file
-    readMatPoly(S);
-    readMatPoly(Sp);
-    readMatPoly(sr);
-
-    if (!inFile.good()) {
-        std::cerr << "An error occurred while reading from the file: " << fileName << std::endl;
+    for (auto&& matRef : mats) {
+        readMatPoly(matRef.get());
     }
+}
 
+void loadKeysFromFile(std::vector<MatPoly>& keyArray, const std::string& fileName) {
+    std::cout << "Loading an array of keys from file: " << fileName << std::endl;
+    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
+    if (!inFile.is_open()) {
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
+        return;
+    }
+    while (inFile.good()) {
+        MatPoly key;
+        readKeysFromStream(inFile, {key});
+        if (inFile.eof()) break;
+        keyArray.push_back(key);
+    }
     inFile.close();
+    std::cout << "Key array loaded successfully." << std::endl;
+}
 
+void loadKeysFromFile(
+        std::initializer_list<std::reference_wrapper<MatPoly>> matsToLoadInto,
+        const std::string& fileName
+    ) {
+    std::cout << "Loading keys from file: " << fileName << std::endl;
+    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
+    if (!inFile.is_open()) {
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
+        return;
+    }
+    readKeysFromStream(inFile, matsToLoadInto);
+    inFile.close();
     std::cout << "Keys loaded successfully." << std::endl;
 }
 
-bool areKeysEqual(const MatPoly &S1, const MatPoly &Sp1, const MatPoly &sr1,
-                  const MatPoly &S2, const MatPoly &Sp2, const MatPoly &sr2) {
-
+bool areMatsEqual(const std::vector<MatPoly>& keyArray1,
+                  const std::vector<MatPoly>& keyArray2) {
+    if (keyArray1.size() != keyArray2.size()) {
+        std::cerr << "Key array sizes are not equal." << std::endl;
+        return false;
+    }
     auto compareMatPoly = [](const MatPoly &mat1, const MatPoly &mat2) -> bool {
         if (mat1.rows != mat2.rows || mat1.cols != mat2.cols || mat1.isNTT != mat2.isNTT) {
             return false;
@@ -2853,36 +2873,31 @@ bool areKeysEqual(const MatPoly &S1, const MatPoly &Sp1, const MatPoly &sr1,
         return memcmp(mat1.data, mat2.data, dataSize * sizeof(uint64_t)) == 0;
     };
 
-    return compareMatPoly(S1, S2) && compareMatPoly(Sp1, Sp2) && compareMatPoly(sr1, sr2);
+    for (int index = 0; index < keyArray1.size(); index++) {
+        if (!compareMatPoly(keyArray1[index], keyArray2[index])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /**
  * @brief Save S, Sp, sr and automorphism keys as a JSON file.
+ *
+ * @returns Query key, qk=(s, S)
  */
-void setup_main() {
-    do_test();
-    exit(0);
-
-    // Create response and gsw secret keys.
-    MatPoly S_Setup, Sp_Setup, sr_Setup;
+void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
+    // Create querying keys.
     S_Setup = MatPoly(n0, n1, false);
     Sp_Setup = MatPoly(n0, k_param, false);
     sr_Setup = MatPoly(1, 1, false);
-
     keygen(S_Setup, Sp_Setup, sr_Setup);
-
-    // Write keys to file.
-    saveKeysToFile(S_Setup, Sp_Setup, sr_Setup, "keys.bin");
+    saveKeysToFile({S_Setup, Sp_Setup, sr_Setup}, "querying_keys.bin");
 
     MatPoly S_Setup_Load, Sp_Setup_Load, sr_Setup_Load;
-    S_Setup_Load = MatPoly(n0, n1, false);
-    Sp_Setup_Load = MatPoly(n0, k_param, false);
-    sr_Setup_Load = MatPoly(1, 1, false);
-
-    loadKeysFromFile(S_Setup_Load, Sp_Setup_Load, sr_Setup_Load, "keys.bin");
-
-    bool areEqual = areKeysEqual(S_Setup, Sp_Setup, sr_Setup, S_Setup_Load, Sp_Setup_Load, sr_Setup_Load);
-    std::cout << (areEqual ? "Keys are equal." : "Keys are not equal") << std::endl;
+    loadKeysFromFile({S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}, "querying_keys.bin");
+    assert(areMatsEqual({S_Setup, Sp_Setup, sr_Setup},
+                        {S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}));
 
     // Create automorphism keys.
     size_t num_expanded = 1 << num_expansions;
@@ -2894,7 +2909,7 @@ void setup_main() {
     size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
     if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
 
-    vector<MatPoly> dummy_X_v, dummy_Y_v, dummy_W_v, W_exp_right_v, W_exp_v;
+    vector<MatPoly> W_exp_right_v, W_exp_v;
     setup_GetPublicEncryptions(
         g, sr_Setup_Load, W_exp_right_v,
         m_exp_right, stopround > 0 ? stopround+1 : 0
@@ -2902,4 +2917,112 @@ void setup_main() {
     setup_GetPublicEncryptions(
         g, sr_Setup_Load, W_exp_v, m_exp
     );
+
+    saveKeysToFile(W_exp_right_v, "automorphism_right.bin");
+    saveKeysToFile(W_exp_v, "automorphism_left.bin");
+
+    vector<MatPoly> test_W_exp_right_v, test_W_exp_v;
+    loadKeysFromFile(test_W_exp_right_v, "automorphism_right.bin");
+    loadKeysFromFile(test_W_exp_v, "automorphism_left.bin");
+    assert(areMatsEqual(W_exp_right_v, test_W_exp_right_v));
+    assert(areMatsEqual(W_exp_v, test_W_exp_v));
+
+    // Create conversion keys W, V.
+    size_t m_conv_n0 = n0 * m_conv;
+    MatPoly G_scale = buildGadget(n0, m_conv_n0);
+    MatPoly s0 = sr_Setup_Load;
+    MatPoly s0G = mul_by_const(to_ntt(s0), to_ntt(G_scale));
+    MatPoly s0G_padded(n1, m_conv_n0);
+    place(s0G_padded, s0G, 1, 0);
+    MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup_Load, m_conv_n0));
+    MatPoly W(n1, m_conv_n0);
+    add(W, P, s0G_padded);
+
+    size_t m_conv_2 = m_conv * 2;
+    MatPoly V(n1, m_conv_2);
+    MatPoly Sp_Setup_Load_NTT = to_ntt(Sp_Setup_Load);
+    start_timing();
+    {
+        MatPoly gv = to_ntt(buildGadget(1, m_conv));
+        // NOTE: Sp_mp is s_gsw.
+        MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup_Load, m_conv_2));
+        // MatPoly P(n1, m_conv_2);
+        // NOTE: s0 = sr_mp = s_regev. s0 * g_z_conv.
+        MatPoly scaled_gv = mul_by_const(to_ntt(s0), gv);
+        MatPoly together(1, m_conv_2);
+        place(together, scaled_gv, 0, 0);
+        place(together, gv, 0, m_conv);
+        // NOTE: -s_gsw * (s0 * g_z_conv)
+        MatPoly result = multiply(Sp_Setup_Load_NTT, together);
+        MatPoly result_padded(n1, m_conv_2);
+        place(result_padded, result, 1, 0);
+        // NOTE: s_gsw_public + [s_gsw * (s0 * g_z_conv)]
+        add(V, P, result_padded);
+    }
+
+    saveKeysToFile({W, V}, "conversion_keys.bin");
+
+    MatPoly W_Load, V_Load;
+    loadKeysFromFile({W_Load, V_Load}, "conversion_keys.bin");
+    assert(areMatsEqual({W, V}, {W_Load, V_Load}));
+}
+
+void query_main(
+    const MatPoly& S_Query, const MatPoly& Sp_Query, const MatPoly& sr_Query
+) {
+    size_t idx_dim0     = IDX_TARGET / (1 << further_dims);
+    uint64_t scal_const = 1;
+    uint64_t init_val = scale_k;
+    size_t m = m2;
+    size_t ell = m / n1;
+    size_t num_expanded = 1 << num_expansions;
+    size_t num_bits_to_gen = ell * further_dims + num_expanded;
+    auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
+    MatPoly sigma(1, 1, false);
+    // First dimension encoding.
+    size_t idx_for_subround = idx_dim0 % (1 << g);
+    sigma.data[idx_for_subround] = (scal_const * (__uint128_t)init_val) % Q_i;
+    // Encode subsequent dimensions.
+    size_t qe_rest = query_elems_rest;
+    size_t idx_further  = IDX_TARGET % (1 << further_dims);
+    size_t bits_per = get_bits_per(ell);
+
+    size_t offset = qe_rest == 0 ? num_expanded : 0;
+    size_t subround = 0;  // WARN: Confirm subround is not needed here.
+    size_t start_of_encoding = num_bits_to_gen * subround;
+    size_t end_of_encoding = start_of_encoding + num_bits_to_gen;
+    size_t ctr = 0;
+    for (size_t i = 0; i < further_dims; i++) {
+        uint64_t bit = (idx_further & (1 << i)) >> i;
+        for (size_t j = 0; j < ell; j++) {
+            size_t idx = i * ell + j;
+            uint64_t val = (1UL << (bits_per * j)) * bit;
+            if ((idx >= start_of_encoding) && (idx < end_of_encoding)) {
+                sigma.data[offset + ctr] = (scal_const * (__uint128_t)val) % Q_i;
+                ctr++;
+            }
+        }
+    }
+    // Possible query packing?
+    uint64_t inv_2_g = inv_mod(1 << g, Q_i);
+    for (size_t i = 0; i < coeff_count; i++) {
+        sigma.data[i] = (sigma.data[i] * (__uint128_t)inv_2_g) % Q_i;
+    }
+    // Query encryption.
+    MatPoly cv = query_encryptSimpleRegev(sr_Query, sigma);
+    // Save the query to a file.
+    saveKeysToFile({cv}, "query.bin");
+
+    MatPoly cv_Load;
+    loadKeysFromFile({cv_Load}, "query.bin");
+    assert(areMatsEqual({cv}, {cv_Load}));
+}
+
+void perform_tests() {
+//    do_test();
+//    exit(0);
+    MatPoly S_Query, Sp_Query, sr_Query;
+    setup_main(S_Query, Sp_Query, sr_Query);
+    query_main(S_Query, Sp_Query, sr_Query);
+
 }

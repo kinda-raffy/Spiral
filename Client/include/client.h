@@ -41,6 +41,7 @@ void load_modswitched_into_ct(MatPoly &ct, const uint64_t *modswitched);
 void dec_compressed(MatPoly &O_out, const MatPoly &C, const MatPoly &S, uint64_t divisor = 1);
 void dec(MatPoly &Z, const MatPoly &S, const MatPoly &C);
 MatPoly encryptSimpleRegev(MatPoly sigma, size_t noise_factor = 1);
+MatPoly query_encryptSimpleRegev(MatPoly sr_Query, MatPoly sigma, size_t noise_factor = 1);
 MatPoly encryptSimpleRegevMatrix(const MatPoly &s, const MatPoly &G_conv, MatPoly sigma_m, size_t noise_factor = 1);
 MatPoly encryptSimpleRegevMatrix(const MatPoly &s, const MatPoly &mat_to_enc, size_t noise_factor = 1);
 void generate_X_improved(size_t mx, MatPoly &X, MatPoly A, MatPoly G);

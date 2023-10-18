@@ -256,6 +256,24 @@ MatPoly encryptSimpleRegev(MatPoly sigma, size_t noise_factor) {
     return result;
 }
 
+MatPoly query_encryptSimpleRegev(const MatPoly sr_Query, MatPoly sigma, size_t noise_factor) {
+    // uses s_1 as the secret key (just a single element)
+    MatPoly s = sr_Query;
+
+    MatPoly P = getRegevSample(s);
+    if (noise_factor > 1) {
+        P = mul_by_const(to_ntt(single_poly(noise_factor)), P);
+    }
+
+    MatPoly sigma_padded(n0, 1, false);
+    place(sigma_padded, sigma, 1, 0);
+
+    MatPoly result(n0, 1);
+    add(result, P, to_ntt(sigma_padded));
+
+    return result;
+}
+
 MatPoly encryptSimpleRegevMatrix(const MatPoly &s, const MatPoly &G_conv, MatPoly sigma_m, size_t noise_factor) {
     assert(G_conv.rows == n0);
     assert(s.rows == 1);

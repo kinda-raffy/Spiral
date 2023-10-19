@@ -1,0 +1,5 @@
+/usr/bin/cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/home/ubuntu/vcpkg/scripts/buildsystems/vcpkg.cmake -S /tmp/Client -B "/tmp/Client/ build"
+-- Intel HEXL found
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/Client/ build

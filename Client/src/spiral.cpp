@@ -16,7 +16,7 @@ bool nonoise = false;
 bool direct_upload = false;
 bool ternary = false;
 bool random_data = false;
-bool show_diff = false;
+bool show_diff = true;
 bool output_err = false;
 
 static size_t total_offline_size_b = 0;
@@ -1386,7 +1386,7 @@ void foldOneFurtherDimension(
     const uint64_t *query_ct, const uint64_t *query_ct_neg,
     FurtherDimsLocals locals
 ) {
-    uint64_t *C_buf = locals.result;
+    uint64_t *C_buf = locals.result;  // Not used.
     uint64_t *g_C = locals.cts;
     uint64_t *g_C_int = locals.scratch_cts1;
     uint64_t *g_C_int2 = locals.scratch_cts2;
@@ -1691,7 +1691,7 @@ void generate_setup_and_query(
  *          query ciphertexts.
  * @param setup_data Not used.
  * @param[in] further_dims_query_ct Further dimensions query ciphertext.
- *      Generated during the GSW expansion phase during @see runConversionImporved()
+ *      Generated during the GSW expansion phase during @see runConversionImproved()
  *      @see pg. 933 Folding in subsequent dimensions.
  * @param[in] further_dims_query_ct_neg A compressed, NTT optimised and negated version
  *       of the further dimensions query ciphertext.
@@ -1753,6 +1753,58 @@ void process_query_fast(
     cout << "done folding" << endl;
 }
 
+void answer_process_query_fast(
+        const uint64_t *further_dims_query_ct,      // further dims query
+        const uint64_t *further_dims_query_ct_neg,
+        ExpansionLocals expansion_locals,           // must be cleared
+        FurtherDimsLocals further_dims_locals       // must be cleared
+) {
+    size_t dim0 = 1 << num_expansions;
+    size_t num_per = total_n / dim0;
+    // WARN: Missing end_timing() call?
+    start_timing();
+    reorientCiphertexts(
+            expansion_locals.reoriented_ciphertexts,
+            expansion_locals.cts,
+            dim0,
+            expansion_locals.n1_padded
+    );
+    time_expansion_main += end_timing();
+    if (direct_upload) time_expansion_main = 0;
+
+    // MARK: Process the first dimension.
+    start_timing();
+    multiplyQueryByDatabase(
+            further_dims_locals.scratch_cts1,
+            expansion_locals.reoriented_ciphertexts,
+            B,
+            dim0,
+            num_per
+    );
+    // NOTE: Remove NTT and CRT formatting.
+    nttInvAndCrtLiftCiphertexts(
+            num_per,
+            further_dims_locals
+    );
+    time_first_multiply = end_timing();
+
+    size_t cur_dim = 0;
+    start_timing();
+    // MARK: Folding in subsequent dimensions.
+    while (num_per >= 2) {
+        num_per = num_per / 2;
+        foldOneFurtherDimension(
+                cur_dim, num_per,
+                further_dims_query_ct,
+                further_dims_query_ct_neg, further_dims_locals
+        );
+        cur_dim++;
+    }
+    time_folding = end_timing();
+    cout << "done folding" << endl;
+}
+
+
 void printScalarMat(MatPoly &A) {
     for (size_t i = 0; i < A.rows; i++) {
         for (size_t j = 0; j < A.cols; j++) {
@@ -1788,7 +1840,7 @@ void buildSpacedIdentity(size_t offs, MatPoly &G) {
 
 /**
  * @brief Performs the initial expansion on the query ciphertext using the
- *        coefficent expansino algortihm.
+ *        coefficent expansion algorithm.
  *
  * @param cv_v The query ciphertext.
  * @param W_left_v The left half of automorphism keys (W0, ...).
@@ -2598,7 +2650,7 @@ void process_crtd_query(
     uint64_t *g_Q_crtd,                // further dims query
     const uint64_t *g_Ws_fft           // use this setup data
 ) {
-    size_t setupData_size_bytes = num_expansions * (n1 * mh * poly_len * sizeof(uint64_t));
+    size_t setupData_size_bytes = num_expansions * (n1 * mh * poly_len * sizeof(uint64_t));  // WARN: Not used.
     size_t query_C_crtd_size_bytes = n1 * m1 * poly_len * sizeof(uint64_t);
     size_t query_later_inp_cts_crtd_size_bytes = further_dims * n1 * m2 *poly_len * sizeof(uint64_t);
 
@@ -2666,6 +2718,7 @@ void process_crtd_query(
 
     cout << "Done with query processing!" << endl;
 }
+
 
 /**
  * @brief Performs an end-to-end PIR test of the basic Spiral/SpiralStream
@@ -2743,47 +2796,14 @@ void do_test() {
     }
 }
 
-void print_keys(MatPoly& S, MatPoly& Sp, MatPoly& sr) {
-    std::cout << "Printing sr: ";
-    for (size_t m = 0; m < poly_len; ++m) {
-        std::cout << sr.data[m] << " ";
-    }
-    std::cout << std::endl;
+// _________________________________________________________________________________
 
-    std::cout << "Printing S:" << std::endl;
-    for (size_t r = 0; r < S.rows; ++r) {
-        for (size_t c = 0; c < S.cols; ++c) {
-            for (size_t m = 0; m < poly_len; ++m) {
-                uint64_t val = S.data[r * S.cols * poly_len + c * poly_len + m];
-                std::cout << val << " ";
-            }
-            std::cout << "| "; // Column separator.
-        }
-        std::cout << std::endl;
-    }
-    std::cout << std::endl;
-
-    std::cout << "Printing Sp:" << std::endl;
-    for (size_t r = 0; r < Sp.rows; ++r) {
-        for (size_t c = 0; c < Sp.cols; ++c) {
-            for (size_t m = 0; m < poly_len; ++m) {
-                uint64_t val = Sp.data[r * Sp.cols * poly_len + c * poly_len + m];
-                std::cout << val << " ";
-            }
-            std::cout << "| "; // Column separator.
-        }
-        std::cout << std::endl;
-    }
-}
-
-void saveKeysToFile(const std::vector<MatPoly>& keyArray, const std::string &fileName) {
-    std::cout << "Saving an array of keys to file: " << fileName << std::endl;
+void saveToFile(const std::vector<MatPoly>& keyArray, const std::string &fileName) {
     std::ofstream outFile(fileName, std::ios::out | std::ios::binary);
     if (!outFile.is_open()) {
         std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
-
     auto writeMatPoly = [&outFile](const MatPoly &mat) {
         outFile.write(reinterpret_cast<const char*>(&mat.rows), sizeof(mat.rows));
         outFile.write(reinterpret_cast<const char*>(&mat.cols), sizeof(mat.cols));
@@ -2792,20 +2812,35 @@ void saveKeysToFile(const std::vector<MatPoly>& keyArray, const std::string &fil
         size_t dataSize = mat.rows * mat.cols * (mat.isNTT ? crt_count : 1) * coeff_count;
         outFile.write(reinterpret_cast<const char*>(mat.data), dataSize * sizeof(uint64_t));
     };
-
     for (const auto & key: keyArray) {
         writeMatPoly(key);
     }
-
     if (!outFile.good()) {
         std::cerr << "An error occurred while writing to the file: " << fileName << std::endl;
     }
-
     outFile.close();
-    std::cout << "Key array saved successfully." << std::endl;
 }
 
-void readKeysFromStream(
+void saveToFile(const FurtherDimsLocals& obj, const std::string &fileName) {
+    std::ofstream outFile(fileName, std::ios::out | std::ios::binary);
+    if (!outFile.is_open()) {
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
+        return;
+    }
+    outFile.write(reinterpret_cast<const char*>(&obj.num_per), sizeof(obj.num_per));
+    outFile.write(reinterpret_cast<const char*>(&obj.num_bytes_C), sizeof(obj.num_bytes_C));
+    // Write uint64_t arrays.
+    outFile.write(reinterpret_cast<const char*>(obj.result), 2 * obj.num_bytes_C);
+    outFile.write(reinterpret_cast<const char*>(obj.cts), 2 * obj.num_bytes_C);
+    outFile.write(reinterpret_cast<const char*>(obj.scratch_cts1), obj.num_bytes_C);
+    outFile.write(reinterpret_cast<const char*>(obj.scratch_cts2), obj.num_bytes_C);
+    outFile.write(reinterpret_cast<const char*>(obj.scratch_cts_double1), (m2 / n1) * obj.num_bytes_C);
+    outFile.write(reinterpret_cast<const char*>(obj.scratch_cts_double2), (m2 / n1) * obj.num_bytes_C);
+
+    outFile.close();
+}
+
+void readFromFileStream(
         std::ifstream& inFile,
         std::initializer_list<std::reference_wrapper<MatPoly>> mats
     ) {
@@ -2821,14 +2856,12 @@ void readKeysFromStream(
         mat.data = (uint64_t*) calloc(dataSize, sizeof(uint64_t));
         inFile.read(reinterpret_cast<char*>(mat.data), dataSize * sizeof(uint64_t));
     };
-
     for (auto&& matRef : mats) {
         readMatPoly(matRef.get());
     }
 }
 
-void loadKeysFromFile(std::vector<MatPoly>& keyArray, const std::string& fileName) {
-    std::cout << "Loading an array of keys from file: " << fileName << std::endl;
+void loadFromFile(std::vector<MatPoly>& keyArray, const std::string& fileName) {
     std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
     if (!inFile.is_open()) {
         std::cerr << "Failed to open the file: " << fileName << std::endl;
@@ -2836,28 +2869,44 @@ void loadKeysFromFile(std::vector<MatPoly>& keyArray, const std::string& fileNam
     }
     while (inFile.good()) {
         MatPoly key;
-        readKeysFromStream(inFile, {key});
+        readFromFileStream(inFile, {key});
         if (inFile.eof()) break;
         keyArray.push_back(key);
     }
     inFile.close();
-    std::cout << "Key array loaded successfully." << std::endl;
 }
 
-void loadKeysFromFile(
+void loadFromFile(
         std::initializer_list<std::reference_wrapper<MatPoly>> matsToLoadInto,
         const std::string& fileName
     ) {
-    std::cout << "Loading keys from file: " << fileName << std::endl;
     std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
     if (!inFile.is_open()) {
         std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
-    readKeysFromStream(inFile, matsToLoadInto);
+    readFromFileStream(inFile, matsToLoadInto);
     inFile.close();
-    std::cout << "Keys loaded successfully." << std::endl;
 }
+
+void loadFromFile(FurtherDimsLocals& obj, const std::string &fileName) {
+    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
+    if (!inFile.is_open()) {
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
+        return;
+    }
+    inFile.read(reinterpret_cast<char*>(&obj.num_per), sizeof(obj.num_per));
+    inFile.read(reinterpret_cast<char*>(&obj.num_bytes_C), sizeof(obj.num_bytes_C));
+    obj.allocate();
+    inFile.read(reinterpret_cast<char*>(obj.result), 2 * obj.num_bytes_C);
+    inFile.read(reinterpret_cast<char*>(obj.cts), 2 * obj.num_bytes_C);
+    inFile.read(reinterpret_cast<char*>(obj.scratch_cts1), obj.num_bytes_C);
+    inFile.read(reinterpret_cast<char*>(obj.scratch_cts2), obj.num_bytes_C);
+    inFile.read(reinterpret_cast<char*>(obj.scratch_cts_double1), (m2 / n1) * obj.num_bytes_C);
+    inFile.read(reinterpret_cast<char*>(obj.scratch_cts_double2), (m2 / n1) * obj.num_bytes_C);
+    inFile.close();
+}
+
 
 bool areMatsEqual(const std::vector<MatPoly>& keyArray1,
                   const std::vector<MatPoly>& keyArray2) {
@@ -2881,6 +2930,22 @@ bool areMatsEqual(const std::vector<MatPoly>& keyArray1,
     return true;
 }
 
+bool areFDLEqual(const FurtherDimsLocals& fdl1, const FurtherDimsLocals& fdl2) {
+    if (fdl1.num_per != fdl2.num_per || fdl1.num_bytes_C != fdl2.num_bytes_C) {
+        std::cerr << "FurtherDimsLocals properties are not equal." << std::endl;
+        return false;
+    }
+    // Compare uint64_t arrays.
+    if (memcmp(fdl1.result, fdl2.result, 2 * fdl1.num_bytes_C) != 0) return false;
+    if (memcmp(fdl1.cts, fdl2.cts, 2 * fdl1.num_bytes_C) != 0) return false;
+    if (memcmp(fdl1.scratch_cts1, fdl2.scratch_cts1, fdl1.num_bytes_C) != 0) return false;
+    if (memcmp(fdl1.scratch_cts2, fdl2.scratch_cts2, fdl1.num_bytes_C) != 0) return false;
+    if (memcmp(fdl1.scratch_cts_double1, fdl2.scratch_cts_double1, m2 / n1 * fdl1.num_bytes_C) != 0) return false;
+    if (memcmp(fdl1.scratch_cts_double2, fdl2.scratch_cts_double2, m2 / n1 * fdl1.num_bytes_C) != 0) return false;
+    return true;
+}
+
+
 /**
  * @brief Save S, Sp, sr and automorphism keys as a JSON file.
  *
@@ -2892,10 +2957,10 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
     Sp_Setup = MatPoly(n0, k_param, false);
     sr_Setup = MatPoly(1, 1, false);
     keygen(S_Setup, Sp_Setup, sr_Setup);
-    saveKeysToFile({S_Setup, Sp_Setup, sr_Setup}, "querying_keys.bin");
+    saveToFile({S_Setup, Sp_Setup, sr_Setup}, "querying_keys.bin");
 
     MatPoly S_Setup_Load, Sp_Setup_Load, sr_Setup_Load;
-    loadKeysFromFile({S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}, "querying_keys.bin");
+    loadFromFile({S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}, "querying_keys.bin");
     assert(areMatsEqual({S_Setup, Sp_Setup, sr_Setup},
                         {S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}));
 
@@ -2905,6 +2970,7 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
     size_t ell = m / n1;
     size_t num_bits_to_gen = ell * further_dims + num_expanded;
     auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
+    // Determine stop round.
     size_t qe_rest = query_elems_rest;
     size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
     if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
@@ -2918,12 +2984,12 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
         g, sr_Setup_Load, W_exp_v, m_exp
     );
 
-    saveKeysToFile(W_exp_right_v, "automorphism_right.bin");
-    saveKeysToFile(W_exp_v, "automorphism_left.bin");
+    saveToFile(W_exp_right_v, "automorphism_right.bin");
+    saveToFile(W_exp_v, "automorphism_left.bin");
 
     vector<MatPoly> test_W_exp_right_v, test_W_exp_v;
-    loadKeysFromFile(test_W_exp_right_v, "automorphism_right.bin");
-    loadKeysFromFile(test_W_exp_v, "automorphism_left.bin");
+    loadFromFile(test_W_exp_right_v, "automorphism_right.bin");
+    loadFromFile(test_W_exp_v, "automorphism_left.bin");
     assert(areMatsEqual(W_exp_right_v, test_W_exp_right_v));
     assert(areMatsEqual(W_exp_v, test_W_exp_v));
 
@@ -2960,16 +3026,17 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
         add(V, P, result_padded);
     }
 
-    saveKeysToFile({W, V}, "conversion_keys.bin");
+    saveToFile({W, V}, "conversion_keys.bin");
 
     MatPoly W_Load, V_Load;
-    loadKeysFromFile({W_Load, V_Load}, "conversion_keys.bin");
+    loadFromFile({W_Load, V_Load}, "conversion_keys.bin");
     assert(areMatsEqual({W, V}, {W_Load, V_Load}));
 }
 
 void query_main(
     const MatPoly& S_Query, const MatPoly& Sp_Query, const MatPoly& sr_Query
 ) {
+    // Initialise.
     size_t idx_dim0     = IDX_TARGET / (1 << further_dims);
     uint64_t scal_const = 1;
     uint64_t init_val = scale_k;
@@ -2977,52 +3044,334 @@ void query_main(
     size_t ell = m / n1;
     size_t num_expanded = 1 << num_expansions;
     size_t num_bits_to_gen = ell * further_dims + num_expanded;
-    auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
-    MatPoly sigma(1, 1, false);
-    // First dimension encoding.
-    size_t idx_for_subround = idx_dim0 % (1 << g);
-    sigma.data[idx_for_subround] = (scal_const * (__uint128_t)init_val) % Q_i;
-    // Encode subsequent dimensions.
     size_t qe_rest = query_elems_rest;
+    size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
+    if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
+    cout << "stopround = " << stopround << endl;
+    auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
+    // Perform query dimension encoding.
+    MatPoly sigma(1, 1, false);
     size_t idx_further  = IDX_TARGET % (1 << further_dims);
     size_t bits_per = get_bits_per(ell);
-
-    size_t offset = qe_rest == 0 ? num_expanded : 0;
-    size_t subround = 0;  // WARN: Confirm subround is not needed here.
-    size_t start_of_encoding = num_bits_to_gen * subround;
-    size_t end_of_encoding = start_of_encoding + num_bits_to_gen;
-    size_t ctr = 0;
-    for (size_t i = 0; i < further_dims; i++) {
-        uint64_t bit = (idx_further & (1 << i)) >> i;
-        for (size_t j = 0; j < ell; j++) {
-            size_t idx = i * ell + j;
-            uint64_t val = (1UL << (bits_per * j)) * bit;
-            if ((idx >= start_of_encoding) && (idx < end_of_encoding)) {
-                sigma.data[offset + ctr] = (scal_const * (__uint128_t)val) % Q_i;
-                ctr++;
+    if (stopround != 0) {
+        // Encode first dimension bits in even coefficients.
+        // Encode subsequent scalars in odd coefficients.
+        sigma.data[2*idx_dim0] = (scal_const * (__uint128_t)init_val) % Q_i;
+        for (size_t i = 0; i < further_dims; i++) {
+            uint64_t bit = (idx_further & (1 << i)) >> i;
+            for (size_t j = 0; j < ell; j++) {
+                size_t idx = i * ell + j;
+                uint64_t val = (1UL << (bits_per * j)) * bit;
+                sigma.data[2*idx+1] = (scal_const * (__uint128_t)val) % Q_i;
+            }
+        }
+    } else {
+        // First dimension encoding.
+        size_t idx_for_subround = idx_dim0 % (1 << g);
+        sigma.data[idx_for_subround] = (scal_const * (__uint128_t)init_val) % Q_i;
+        // Encode subsequent dimensions.
+        size_t offset = qe_rest == 0 ? num_expanded : 0;
+        size_t subround = 0;  // WARN: Confirm subround is not needed here.
+        size_t start_of_encoding = num_bits_to_gen * subround;
+        size_t end_of_encoding = start_of_encoding + num_bits_to_gen;
+        size_t ctr = 0;
+        for (size_t i = 0; i < further_dims; i++) {
+            uint64_t bit = (idx_further & (1 << i)) >> i;
+            for (size_t j = 0; j < ell; j++) {
+                size_t idx = i * ell + j;
+                uint64_t val = (1UL << (bits_per * j)) * bit;
+                if ((idx >= start_of_encoding) && (idx < end_of_encoding)) {
+                    sigma.data[offset + ctr] = (scal_const * (__uint128_t)val) % Q_i;
+                    ctr++;
+                }
             }
         }
     }
     // Possible query packing?
-    uint64_t inv_2_g = inv_mod(1 << g, Q_i);
-    for (size_t i = 0; i < coeff_count; i++) {
-        sigma.data[i] = (sigma.data[i] * (__uint128_t)inv_2_g) % Q_i;
+    if (stopround != 0) {
+        uint64_t inv_2_g_first = inv_mod(1 << g, Q_i);
+        uint64_t inv_2_g_rest = inv_mod(1 << (stopround+1), Q_i);
+        for (size_t i = 0; i < coeff_count/2; i++) {
+            sigma.data[2*i] = (sigma.data[2*i] * (__uint128_t)inv_2_g_first) % Q_i;
+            sigma.data[2*i+1] = (sigma.data[2*i+1] * (__uint128_t)inv_2_g_rest) % Q_i;
+        }
+    } else {
+        uint64_t inv_2_g = inv_mod(1 << g, Q_i);
+        for (size_t i = 0; i < coeff_count; i++) {
+            sigma.data[i] = (sigma.data[i] * (__uint128_t)inv_2_g) % Q_i;
+        }
     }
     // Query encryption.
     MatPoly cv = query_encryptSimpleRegev(sr_Query, sigma);
+    std::vector<MatPoly> round_cv_v;
+    round_cv_v.push_back(cv);
+    for (size_t i = 0; i < (1<<g) - 1; i++) {
+        round_cv_v.emplace_back(n0, 1);
+    }
     // Save the query to a file.
-    saveKeysToFile({cv}, "query.bin");
+    saveToFile(round_cv_v, "query.bin");
 
-    MatPoly cv_Load;
-    loadKeysFromFile({cv_Load}, "query.bin");
-    assert(areMatsEqual({cv}, {cv_Load}));
+    std::vector<MatPoly> round_cv_Load;
+    loadFromFile({round_cv_Load}, "query.bin");
+    assert(areMatsEqual({round_cv_v}, {round_cv_Load}));
+}
+
+void answer_main() {
+    // Initialize the server.
+    size_t m = m2;
+    size_t ell = m / n1;
+    size_t num_expanded = 1 << num_expansions;
+    size_t num_bits_to_gen = ell * further_dims + num_expanded;
+    uint64_t *g_Q_crtd = (uint64_t *)malloc(further_dims * (n1 * m2 * coeff_count) * sizeof(uint64_t));
+    size_t query_later_inp_cts_crtd_size_bytes = further_dims * n1 * m2 *poly_len * sizeof(uint64_t);
+    auto* g_Q_nttd = (uint64_t *)malloc(crt_count * query_later_inp_cts_crtd_size_bytes);
+    ExpansionLocals expansionLocals;
+    expansionLocals.allocate();
+    auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
+    // Load the public parameters.
+    std::vector<MatPoly> W_exp_right_v_Answer, W_exp_v_Answer;
+    loadFromFile(W_exp_right_v_Answer, "automorphism_right.bin");
+    loadFromFile(W_exp_v_Answer, "automorphism_left.bin");
+    MatPoly W_Answer, V_Answer;
+    loadFromFile({W_Answer, V_Answer}, "conversion_keys.bin");
+    // Load the query.
+    std::vector<MatPoly> round_cv_v_Answer;
+    loadFromFile({round_cv_v_Answer}, "query.bin");
+    // Determine stop round.
+    size_t qe_rest = query_elems_rest;
+    size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
+    if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
+    // Initial expansion.
+    (void)expandImproved(
+        round_cv_v_Answer, g, m_exp,
+        W_exp_v_Answer, W_exp_right_v_Answer,
+        ell * further_dims, stopround
+    );
+    // Reorder ciphertexts when using stop round.
+    if (stopround != 0) {
+        round_cv_v_Answer = reorderFromStopround(round_cv_v_Answer, num_expanded, ell * further_dims);
+    }
+    // Note: The cv_v vector might be a side effect of stream testing.
+    //       cv_v is used here for compatibility.
+    std::vector<MatPoly> cv_v_Answer;
+    cv_v_Answer.insert(
+        cv_v_Answer.end(), round_cv_v_Answer.begin(),
+        round_cv_v_Answer.begin() + num_bits_to_gen
+    );
+    // Note: Run 'composition'.
+    size_t composed_ct_size_coeffs = n1 * n0 * crt_count * poly_len;
+    MatPoly C_reg(n1, n0);
+    // Scratch matrices.
+    MatPoly cv_0(1, 1);
+    MatPoly cv_1(1, 1);
+    MatPoly cv_ntti(1, 1, false);
+    MatPoly square_cv(n0, n0, false);
+    MatPoly ginv_c(n0 * m_conv, n0, false);
+    MatPoly ginv_c_nttd(n0 * m_conv, n0);
+    MatPoly prod_W_ginv(n1, n0);
+    MatPoly padded_cv_1(n1, n0);
+    MatPoly ginv_c_raw(m_conv, 1, false);
+    MatPoly ginv_c_raw_nttd(m_conv, 1);
+    // First dimension expansion.
+    for (size_t i = 0; i < num_expanded; i++) {
+        scalToMat(
+            m_conv,
+            C_reg,
+            cv_v_Answer[i],
+            W_Answer,
+            cv_0,
+            cv_1,
+            cv_ntti,
+            square_cv,
+            ginv_c,
+            ginv_c_nttd,
+            prod_W_ginv,
+            padded_cv_1,
+            ginv_c_raw,
+            ginv_c_raw_nttd
+        );
+
+        memcpy(
+            &expansionLocals.cts[i * composed_ct_size_coeffs],
+            C_reg.data,
+            composed_ct_size_coeffs * sizeof(uint64_t)
+        );
+    }
+    // Run 'conversion'
+    MatPoly c_ntti(n0, 1, false);           // n0 x 1
+    MatPoly W_switched(n0, 1);                       // n0 x 1, ntt
+    MatPoly Y_switched(n0, 1);                       // n0 x 1, ntt
+    MatPoly C_v_0(n0, m);                            // n0 x m, ntt
+    MatPoly C_v_1(n0, m);                            // n0 x m, ntt
+    MatPoly C_v_0_ntti(n0, m, false);       // n0 x m
+    MatPoly C_v_1_ntti(n0, m, false);       // n0 x m
+    MatPoly ginv_Ct(m_conv, m, false);      // m_conv x m
+    MatPoly ginv_Ct_ntt(m_conv, m);                  // m_conv x m, ntt
+    MatPoly prod0(n1, m);                            // n1 x m, ntt
+    MatPoly prod1(n1, m);                            // n1 x m, ntt
+    MatPoly Cp(n1, m);
+    MatPoly Cp_raw(n1, m, false);
+    // GSW ciphertext expansion.
+    for (size_t i = 0; i < further_dims; i++) {
+        size_t cv_v_offset = num_expanded + i * ell;
+        regevToGSW(
+            m_conv, m2 / n1, Cp,
+            cv_v_Answer, cv_v_offset, W_Answer, V_Answer
+        );
+        memcpy(
+            &g_Q_nttd[(further_dims - 1 - i) * n1 * m * crt_count * poly_len],
+            Cp.data,
+            n1 * m * crt_count * poly_len * sizeof(uint64_t)
+        );
+        from_ntt(Cp_raw, Cp);
+        // NOTE: Look into this further.
+        to_simple_crtd(&g_Q_crtd[(further_dims - 1 - i) * n1 * m * poly_len], Cp_raw);
+    }
+    // Perform representation optimisation? and negate further dimensions query.
+    auto* g_Q_neg_crtd = (uint64_t *)malloc(query_later_inp_cts_crtd_size_bytes);
+    #pragma omp parallel for
+    for (size_t j = 0; j < further_dims; j++) {
+        for (size_t r = 0; r < n1; r++) {
+            for (size_t m = 0; m < m2; m++) {
+                for (size_t z = 0; z < poly_len; z++) {
+                    size_t idx_base = j*(n1 * m2 * poly_len);
+                    size_t idx = r*(m2 * poly_len) + m*(poly_len) + z;
+                    long val = (long)(G2.data[(r * G2.cols + m) * coeff_count + z]) - (long)g_Q_crtd[idx_base + idx];
+                    if (val < 0) val += Q_i_u128;
+                    g_Q_neg_crtd[idx_base + idx] = val;
+                }
+            }
+        }
+    }
+    auto* g_Q_neg_nttd = (uint64_t *)malloc(crt_count * query_later_inp_cts_crtd_size_bytes);
+    cpu_crt_to_ucompressed_and_ntt(g_Q_neg_nttd, g_Q_neg_crtd, further_dims * n1 * m2);
+    free(g_Q_neg_crtd);
+    // Reorient query matrix.
+    size_t num_bytes_per_Q = n1 * m2 * crt_count * poly_len * sizeof(uint64_t);
+    auto* g_Q = (uint64_t *)malloc(further_dims * num_bytes_per_Q);
+    auto* g_Q_neg = (uint64_t *)malloc(further_dims * num_bytes_per_Q);
+    #pragma omp parallel for
+    for (size_t j = 0; j < further_dims; j++) {
+        size_t idx = j*(n1 * m2 * crt_count * poly_len);
+        reorient_Q(&g_Q[idx], &g_Q_nttd[idx]);
+        reorient_Q(&g_Q_neg[idx], &g_Q_neg_nttd[idx]);
+    }
+    free(g_Q_nttd);
+    free(g_Q_neg_nttd);
+    // Perform query processing.
+    size_t dim0 = 1 << num_expansions;
+    size_t num_per = total_n / dim0;
+    FurtherDimsLocals furtherDimsLocals(num_per);
+    furtherDimsLocals.allocate();
+    answer_process_query_fast(
+        g_Q,
+        g_Q_neg,
+        expansionLocals,
+        furtherDimsLocals
+    );
+    // Rescale the response via modulus switching.
+    modswitch(furtherDimsLocals.result, furtherDimsLocals.cts);
+    // Save the rescaled response to a file.
+    saveToFile(furtherDimsLocals, "response.bin");
+    FurtherDimsLocals furtherDimsLocals_Load(num_per);
+    loadFromFile(furtherDimsLocals_Load, "response.bin");
+    assert(areFDLEqual(furtherDimsLocals, furtherDimsLocals_Load));
+}
+
+void extract_main() {
+    // Load server response.
+    size_t dim0 = 1 << num_expansions;
+    size_t num_per = total_n / dim0;
+    FurtherDimsLocals furtherDimsLocals(num_per);
+    loadFromFile(furtherDimsLocals, "response.bin");
+    // Setup for extraction.
+    MatPoly Sp_mp_nttd_qprime(n0, k_param, false);
+    MatPoly S_Load, Sp_Load, sr_Load_Unused;
+    loadFromFile({S_Load, Sp_Load, sr_Load_Unused}, "querying_keys.bin");
+    Sp_mp_nttd_qprime = Sp_Load;
+    to_ntt_qprime(Sp_mp_nttd_qprime);
+    time_key_gen += end_timing();
+
+    MatPoly ct_inp(n1, n2, false);
+    for (size_t i = 0; i < n1 * n2 * poly_len; i++) {
+        ct_inp.data[i] = furtherDimsLocals.cts[i];
+    }
+    uint64_t q_1 = 4*p_db;
+    // Rescale the final encoding (PIR response).
+    MatPoly first_row = pick(ct_inp, 0, 0, 1, ct_inp.cols);
+    MatPoly first_row_sw = getRescaled(first_row, Q_i, arb_qprime);
+    MatPoly rest_rows = pick(ct_inp, 1, 0, ct_inp.rows - 1, ct_inp.cols);
+    MatPoly rest_rows_sw = getRescaled(rest_rows, Q_i, q_1);
+    MatPoly total_resp(n1, n2, false);
+    place(total_resp, first_row_sw, 0, 0);
+    place(total_resp, rest_rows_sw, 1, 0);
+    // Recover takes in rescaled encoding and the secret key and outputs Z.
+    MatPoly first_row_decoded = pick(total_resp, 0, 0, 1, total_resp.cols);
+    MatPoly rest_rows_decoded = pick(total_resp, 1, 0, total_resp.rows - 1, total_resp.cols);
+    to_ntt_qprime(first_row_decoded);
+    MatPoly s_prod = mul_over_qprime(Sp_mp_nttd_qprime, first_row_decoded);
+    from_ntt_qprime(s_prod);  // Z.
+    // Decode the response to get the encoded message.
+    MatPoly M_result(n0, n0, false);
+    for (size_t i = 0; i < s_prod.rows * s_prod.cols * poly_len; i++) {
+        int64_t val_first = s_prod.data[i];
+        if (val_first >= arb_qprime/2) val_first -= arb_qprime;
+        int64_t val_rest = rest_rows_decoded.data[i];
+        if (val_rest >= q_1/2) val_rest -= q_1;
+
+        uint64_t denom = arb_qprime * (q_1/p_db);
+
+        int64_t r = val_first * q_1;
+        r +=  val_rest * arb_qprime;
+        // divide r by arb_qprime, rounding
+        int64_t sign = r >= 0 ? 1 : -1;
+        __int128_t val = r;
+        __int128_t result = (r + sign*((int64_t)denom/2)) / (__int128_t)denom;
+        result = (result + (denom/p_db)*p_db + 2*p_db) % p_db;
+
+        s_prod.data[i] = (uint64_t)result;
+    }
+    M_result = s_prod;  // M.
+    // Check for correctness.
+    MatPoly corr = pt_real;
+    std::cout << "Message is "
+              << (is_eq(corr, M_result) ? "correct." : "incorrect.")
+              << std::endl;
+    // If any, show differences between encoded message and actual.
+    if (show_diff) {
+        for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
+            if (corr.data[i] != M_result.data[i]) {
+                std::cout << i << " " << corr.data[i] << ", " << M_result.data[i] << endl;
+            }
+        }
+    }
+    // Output errors.
+    MatPoly ct(n1, n2, false);
+    if (output_err) {
+        for (size_t i = 0; i < n1 * n2 * poly_len; i++) {
+            ct.data[i] = furtherDimsLocals.cts[i];
+        }
+        MatPoly Z = multiply(S_Load, ct);
+        MatPoly Z_uncrtd = from_ntt(Z);
+        divide_by_const(Z_uncrtd, Z_uncrtd, p_db, Q_i, p_db);
+        double log_var = get_log_var(Z_uncrtd, corr, show_diff, p_db);
+        std::cout << "variance of diff w/o modswitching: 2^" << log_var << endl;
+        MatPoly scaled_pt = mul_by_const(to_ntt(single_poly(scale_k)), pt_encd_correct);
+        std::vector<int64_t> diffs = get_diffs(from_ntt(Z), from_ntt(scaled_pt), Q_i);
+        std::cout << "diffs: ";
+        std::fstream output;
+        output.open(outputErrFilename, std::fstream::out | std::fstream::app | std::fstream::ate);
+        output_diffs(output, diffs);
+        output.close();
+        std::cout << std::endl;
+    }
 }
 
 void perform_tests() {
-//    do_test();
-//    exit(0);
+//    do_test(); exit(0);
     MatPoly S_Query, Sp_Query, sr_Query;
     setup_main(S_Query, Sp_Query, sr_Query);
     query_main(S_Query, Sp_Query, sr_Query);
-
+    answer_main();
+    extract_main();
 }

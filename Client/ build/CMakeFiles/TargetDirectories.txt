@@ -1,3 +1,0 @@
-/tmp/Client/ build/CMakeFiles/rebuild_cache.dir
-/tmp/Client/ build/CMakeFiles/edit_cache.dir
-/tmp/Client/ build/CMakeFiles/spiral.dir

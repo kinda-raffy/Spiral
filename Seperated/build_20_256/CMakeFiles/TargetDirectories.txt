@@ -1,0 +1,3 @@
+/tmp/Seperated/build_20_256/CMakeFiles/rebuild_cache.dir
+/tmp/Seperated/build_20_256/CMakeFiles/edit_cache.dir
+/tmp/Seperated/build_20_256/CMakeFiles/spiral.dir

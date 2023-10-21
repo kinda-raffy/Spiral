@@ -16,7 +16,7 @@ bool nonoise = false;
 bool direct_upload = false;
 bool ternary = false;
 bool random_data = false;
-bool show_diff = true;
+bool show_diff = false;
 bool output_err = false;
 
 static size_t total_offline_size_b = 0;

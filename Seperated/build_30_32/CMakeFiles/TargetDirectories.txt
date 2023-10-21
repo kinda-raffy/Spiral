@@ -1,3 +1,0 @@
-/tmp/Seperated/build_30_32/CMakeFiles/rebuild_cache.dir
-/tmp/Seperated/build_30_32/CMakeFiles/edit_cache.dir
-/tmp/Seperated/build_30_32/CMakeFiles/spiral.dir

@@ -33,7 +33,6 @@ spiral-*
 !exp_lut.json
 !exp_lut_highrate.json
 !fdim_lut_highrate.json
-.idea/
 documents/
 errs-*
 errs*.csv
@@ -48,7 +47,7 @@ err*.txt
 *.png
 
 # CMake
-build/
+build*/
 
 .ipynb_checkpoints
 __pycache__

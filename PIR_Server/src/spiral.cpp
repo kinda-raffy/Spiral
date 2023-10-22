@@ -72,6 +72,7 @@ namespace NativeLog {
 }
 #endif
 
+
 #ifdef LOG
 namespace Log {
     struct Cout {
@@ -2937,10 +2938,10 @@ void do_test() {
 
 // _________________________________________________________________________________
 
-void saveToFile(const std::vector<MatPoly>& keyArray, const std::filesystem::path& filePath) {
-    std::ofstream outFile(filePath, std::ios::out | std::ios::binary);
+void saveToFile(const std::vector<MatPoly>& keyArray, const std::string &fileName) {
+    std::ofstream outFile(fileName, std::ios::out | std::ios::binary);
     if (!outFile.is_open()) {
-        std::cerr << "Failed to open: " << filePath << std::endl;
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
     auto writeMatPoly = [&outFile](const MatPoly &mat) {
@@ -2955,15 +2956,15 @@ void saveToFile(const std::vector<MatPoly>& keyArray, const std::filesystem::pat
         writeMatPoly(key);
     }
     if (!outFile.good()) {
-        std::cerr << "An error occurred while writing to: " << filePath << std::endl;
+        std::cerr << "An error occurred while writing to the file: " << fileName << std::endl;
     }
     outFile.close();
 }
 
-void saveToFile(const FurtherDimsLocals& obj, const std::filesystem::path& filePath) {
-    std::ofstream outFile(filePath, std::ios::out | std::ios::binary);
+void saveToFile(const FurtherDimsLocals& obj, const std::string &fileName) {
+    std::ofstream outFile(fileName, std::ios::out | std::ios::binary);
     if (!outFile.is_open()) {
-        std::cerr << "Failed to open the file: " << filePath << std::endl;
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
     outFile.write(reinterpret_cast<const char*>(&obj.num_per), sizeof(obj.num_per));
@@ -2977,34 +2978,6 @@ void saveToFile(const FurtherDimsLocals& obj, const std::filesystem::path& fileP
     outFile.write(reinterpret_cast<const char*>(obj.scratch_cts_double2), (m2 / n1) * obj.num_bytes_C);
 
     outFile.close();
-}
-
-void sendToPipe(const std::vector<MatPoly>& keyArray, const std::filesystem::path& filePath) {
-    int pipeFileDescriptor {};
-    mkfifo(filePath.c_str(), 0666);
-    Log::cout << "Waiting for server to connect to " << filePath.filename() << " pipe." << std::endl;
-    pipeFileDescriptor = open(filePath.c_str(), O_WRONLY);
-    if (pipeFileDescriptor < 0) {
-        std::cerr << "Failed to open pipe: " << filePath << std::endl;
-        return;
-    }
-    Log::cout << "Server connected to " << filePath.filename() << " pipe." << std::endl;
-    auto sendMatPoly = [&pipeFileDescriptor](const MatPoly &mat) {
-        write(pipeFileDescriptor, &mat.rows, sizeof(mat.rows));
-        write(pipeFileDescriptor, &mat.cols, sizeof(mat.cols));
-        write(pipeFileDescriptor, &mat.isNTT, sizeof(mat.isNTT));
-
-        size_t dataSize = mat.rows * mat.cols * (mat.isNTT ? crt_count : 1) * coeff_count;
-        write(pipeFileDescriptor, mat.data, dataSize * sizeof(uint64_t));
-    };
-    Log::cout << "Sending " << keyArray.size()
-              << " Matrices via " << filePath.filename()
-              << " pipe." << std::endl;
-    for (const auto & mat: keyArray) {
-        sendMatPoly(mat);
-    }
-    close(pipeFileDescriptor);
-    Log::cout << "Transmission completed." << std::endl;
 }
 
 void readFromFileStream(
@@ -3028,10 +3001,10 @@ void readFromFileStream(
     }
 }
 
-void loadFromFile(std::vector<MatPoly>& keyArray, const std::filesystem::path& filePath) {
-    std::ifstream inFile(filePath, std::ios::in | std::ios::binary);
+void loadFromFile(std::vector<MatPoly>& keyArray, const std::string& fileName) {
+    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
     if (!inFile.is_open()) {
-        std::cerr << "Failed to open the file: " << filePath << std::endl;
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
     while (inFile.good()) {
@@ -3045,53 +3018,33 @@ void loadFromFile(std::vector<MatPoly>& keyArray, const std::filesystem::path& f
 
 void loadFromFile(
         std::initializer_list<std::reference_wrapper<MatPoly>> matsToLoadInto,
-        const std::filesystem::path& filePath
+        const std::string& fileName
     ) {
-    std::ifstream inFile(filePath, std::ios::in | std::ios::binary);
+    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
     if (!inFile.is_open()) {
-        std::cerr << "Failed to open the file: " << filePath << std::endl;
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
     readFromFileStream(inFile, matsToLoadInto);
     inFile.close();
 }
 
-void loadFromFile(FurtherDimsLocals& obj, const std::filesystem::path& filePath) {
-    std::ifstream inFile(filePath, std::ios::in | std::ios::binary);
+void loadFromFile(FurtherDimsLocals& obj, const std::string &fileName) {
+    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
     if (!inFile.is_open()) {
-        std::cerr << "Failed to open the file: " << filePath << std::endl;
+        std::cerr << "Failed to open the file: " << fileName << std::endl;
         return;
     }
     inFile.read(reinterpret_cast<char*>(&obj.num_per), sizeof(obj.num_per));
     inFile.read(reinterpret_cast<char*>(&obj.num_bytes_C), sizeof(obj.num_bytes_C));
     obj.allocate();
-    inFile.read(reinterpret_cast<char *>(obj.result), 2 * obj.num_bytes_C);
+    inFile.read(reinterpret_cast<char*>(obj.result), 2 * obj.num_bytes_C);
     inFile.read(reinterpret_cast<char*>(obj.cts), 2 * obj.num_bytes_C);
     inFile.read(reinterpret_cast<char*>(obj.scratch_cts1), obj.num_bytes_C);
     inFile.read(reinterpret_cast<char*>(obj.scratch_cts2), obj.num_bytes_C);
     inFile.read(reinterpret_cast<char*>(obj.scratch_cts_double1), (m2 / n1) * obj.num_bytes_C);
     inFile.read(reinterpret_cast<char*>(obj.scratch_cts_double2), (m2 / n1) * obj.num_bytes_C);
     inFile.close();
-}
-
-void loadFromPipe(FurtherDimsLocals& obj, const std::filesystem::path& filePath) {
-    int pipeFileDescriptor {};
-    mkfifo(filePath.c_str(), 0666);
-    pipeFileDescriptor = open(filePath.c_str(), O_RDONLY);
-    if (pipeFileDescriptor < 0) {
-        std::cerr << "Failed to open the pipe: " << filePath << std::endl;
-        return;
-    }
-    read(pipeFileDescriptor, &obj.num_per, sizeof(obj.num_per));
-    read(pipeFileDescriptor, &obj.num_bytes_C, sizeof(obj.num_bytes_C));
-    obj.allocate();
-    read(pipeFileDescriptor, obj.result, 2 * obj.num_bytes_C);
-    read(pipeFileDescriptor, obj.cts, 2 * obj.num_bytes_C);
-    read(pipeFileDescriptor, obj.scratch_cts1, obj.num_bytes_C);
-    read(pipeFileDescriptor, obj.scratch_cts2, obj.num_bytes_C);
-    read(pipeFileDescriptor, obj.scratch_cts_double1, (m2 / n1) * obj.num_bytes_C);
-    read(pipeFileDescriptor, obj.scratch_cts_double2, (m2 / n1) * obj.num_bytes_C);
-    close(pipeFileDescriptor);
 }
 
 
@@ -3146,11 +3099,12 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
     sr_Setup = MatPoly(1, 1, false);
     keygen(S_Setup, Sp_Setup, sr_Setup);
     GlobalTimer::stop("Query key creation");
-    sendToPipe({S_Setup, Sp_Setup, sr_Setup}, Process::workspace("querying_keys.bin"));
-    // MatPoly S_Setup_Load, Sp_Setup_Load, sr_Setup_Load;
-    // loadFromFile({S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}, Process::workspace("querying_keys.bin"));
-    // assert(areMatsEqual({S_Setup, Sp_Setup, sr_Setup},
-    //                     {S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}));
+    saveToFile({S_Setup, Sp_Setup, sr_Setup}, "querying_keys.bin");
+
+    MatPoly S_Setup_Load, Sp_Setup_Load, sr_Setup_Load;
+    loadFromFile({S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}, "querying_keys.bin");
+    assert(areMatsEqual({S_Setup, Sp_Setup, sr_Setup},
+                        {S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}));
     // Create automorphism keys.
     GlobalTimer::set("Automorphism key creation");
     size_t num_expanded = 1 << num_expansions;
@@ -3165,43 +3119,43 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
 
     vector<MatPoly> W_exp_right_v, W_exp_v;
     setup_GetPublicEncryptions(
-        g, sr_Setup, W_exp_right_v,
+        g, sr_Setup_Load, W_exp_right_v,
         m_exp_right, stopround > 0 ? stopround+1 : 0
     );
     setup_GetPublicEncryptions(
-        g, sr_Setup, W_exp_v, m_exp
+        g, sr_Setup_Load, W_exp_v, m_exp
     );
     GlobalTimer::stop("Automorphism key creation");
 
-    sendToPipe(W_exp_right_v, Process::workspace("automorphism_right.bin"));
-    sendToPipe(W_exp_v, Process::workspace("automorphism_left.bin"));
+    saveToFile(W_exp_right_v, "automorphism_right.bin");
+    saveToFile(W_exp_v, "automorphism_left.bin");
 
-    // vector<MatPoly> test_W_exp_right_v, test_W_exp_v;
-    // loadFromFile(test_W_exp_right_v, Process::workspace("automorphism_right.bin"));
-    // loadFromFile(test_W_exp_v, Process::workspace("automorphism_left.bin"));
-    // assert(areMatsEqual(W_exp_right_v, test_W_exp_right_v));
-    // assert(areMatsEqual(W_exp_v, test_W_exp_v));
+    vector<MatPoly> test_W_exp_right_v, test_W_exp_v;
+    loadFromFile(test_W_exp_right_v, "automorphism_right.bin");
+    loadFromFile(test_W_exp_v, "automorphism_left.bin");
+    assert(areMatsEqual(W_exp_right_v, test_W_exp_right_v));
+    assert(areMatsEqual(W_exp_v, test_W_exp_v));
 
     // Create conversion keys W, V.
     GlobalTimer::set("Conversion key creation");
     size_t m_conv_n0 = n0 * m_conv;
     MatPoly G_scale = buildGadget(n0, m_conv_n0);
-    MatPoly s0 = sr_Setup;
+    MatPoly s0 = sr_Setup_Load;
     MatPoly s0G = mul_by_const(to_ntt(s0), to_ntt(G_scale));
     MatPoly s0G_padded(n1, m_conv_n0);
     place(s0G_padded, s0G, 1, 0);
-    MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup, m_conv_n0));
+    MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup_Load, m_conv_n0));
     MatPoly W(n1, m_conv_n0);
     add(W, P, s0G_padded);
 
     size_t m_conv_2 = m_conv * 2;
     MatPoly V(n1, m_conv_2);
-    MatPoly Sp_Setup_NTT = to_ntt(Sp_Setup);
+    MatPoly Sp_Setup_Load_NTT = to_ntt(Sp_Setup_Load);
     start_timing();
     {
         MatPoly gv = to_ntt(buildGadget(1, m_conv));
         // NOTE: Sp_mp is s_gsw.
-        MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup, m_conv_2));
+        MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup_Load, m_conv_2));
         // MatPoly P(n1, m_conv_2);
         // NOTE: s0 = sr_mp = s_regev. s0 * g_z_conv.
         MatPoly scaled_gv = mul_by_const(to_ntt(s0), gv);
@@ -3209,7 +3163,7 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
         place(together, scaled_gv, 0, 0);
         place(together, gv, 0, m_conv);
         // NOTE: -s_gsw * (s0 * g_z_conv)
-        MatPoly result = multiply(Sp_Setup_NTT, together);
+        MatPoly result = multiply(Sp_Setup_Load_NTT, together);
         MatPoly result_padded(n1, m_conv_2);
         place(result_padded, result, 1, 0);
         // NOTE: s_gsw_public + [s_gsw * (s0 * g_z_conv)]
@@ -3217,11 +3171,11 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
     }
     GlobalTimer::stop("Conversion key creation");
 
-    sendToPipe({W, V}, Process::workspace("conversion_keys.bin"));
+    saveToFile({W, V}, "conversion_keys.bin");
 
-    // MatPoly W_Load, V_Load;
-    // loadFromFile({W_Load, V_Load}, Process::workspace("conversion_keys.bin"));
-    // assert(areMatsEqual({W, V}, {W_Load, V_Load}));
+    MatPoly W_Load, V_Load;
+    loadFromFile({W_Load, V_Load}, "conversion_keys.bin");
+    assert(areMatsEqual({W, V}, {W_Load, V_Load}));
 }
 
 void query_main(
@@ -3310,10 +3264,10 @@ void query_main(
     }
     GlobalTimer::stop("Query encryption");
     // Save the query to a file.
-    saveToFile(round_cv_v, Process::workspace("query.bin"));
+    saveToFile(round_cv_v, "../../Process_Workspace/query.bin");
 
     std::vector<MatPoly> round_cv_Load;
-    loadFromFile({round_cv_Load}, Process::workspace("query.bin"));
+    loadFromFile({round_cv_Load}, "../../Process_Workspace/query.bin");
     assert(areMatsEqual({round_cv_v}, {round_cv_Load}));
 }
 
@@ -3332,15 +3286,15 @@ void answer_main() {
     // Load the public parameters.
     GlobalTimer::set("Public parameter loading");
     std::vector<MatPoly> W_exp_right_v_Answer, W_exp_v_Answer;
-    loadFromFile(W_exp_right_v_Answer, Process::workspace("automorphism_right.bin"));
-    loadFromFile(W_exp_v_Answer, Process::workspace("automorphism_left.bin"));
+    loadFromFile(W_exp_right_v_Answer, "automorphism_right.bin");
+    loadFromFile(W_exp_v_Answer, "automorphism_left.bin");
     MatPoly W_Answer, V_Answer;
-    loadFromFile({W_Answer, V_Answer}, Process::workspace("conversion_keys.bin"));
+    loadFromFile({W_Answer, V_Answer}, "conversion_keys.bin");
     GlobalTimer::stop("Public parameter loading");
     // Load the query.
     GlobalTimer::set("Query loading");
     std::vector<MatPoly> round_cv_v_Answer;
-    loadFromFile({round_cv_v_Answer}, Process::workspace("query.bin"));
+    loadFromFile({round_cv_v_Answer}, "query.bin");
     GlobalTimer::stop("Query loading");
     // Determine stop round.
     size_t qe_rest = query_elems_rest;
@@ -3485,9 +3439,9 @@ void answer_main() {
     modswitch(furtherDimsLocals.result, furtherDimsLocals.cts);
     GlobalTimer::stop("Rescale response via modulus switching");
     // Save the rescaled response to a file.
-    saveToFile(furtherDimsLocals, Process::workspace("response.bin"));
+    saveToFile(furtherDimsLocals, "response.bin");
     FurtherDimsLocals furtherDimsLocals_Load(num_per);
-    loadFromFile(furtherDimsLocals_Load, Process::workspace("response.bin"));
+    loadFromFile(furtherDimsLocals_Load, "response.bin");
     assert(areFDLEqual(furtherDimsLocals, furtherDimsLocals_Load));
 }
 
@@ -3497,7 +3451,7 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     size_t dim0 = 1 << num_expansions;
     size_t num_per = total_n / dim0;
     FurtherDimsLocals furtherDimsLocals(num_per);
-    loadFromPipe(furtherDimsLocals, "response.bin");
+    loadFromFile(furtherDimsLocals, "response.bin");
     GlobalTimer::stop("Load server response");
     // Setup for extraction.
     MatPoly Sp_mp_nttd_qprime(n0, k_param, false);
@@ -3587,28 +3541,41 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     }
 }
 
-void refreshWorkspaceDirectory() {
-    if (!std::filesystem::is_empty(Process::workspacePath)) {
-        Log::cout << "Clearing process workspace." << std::endl;
-        std::string command = "rm -rf " + Process::workspacePath.string() + "/*";
-        system(command.c_str());
+
+void setupServer(MatPoly& S, MatPoly& Sp, MatPoly& sr, const std::filesystem::path& filePath) {
+    int pipeFileDescriptor {};
+    mkfifo(filePath.c_str(), 0666);
+    Log::cout << "Waiting for client to connect to " << filePath.filename() << " pipe." << std::endl;
+    pipeFileDescriptor = open(filePath.c_str(), O_RDONLY);
+    Log::cout << "Client connected to " << filePath.filename() << " pipe." << std::endl;
+    if (pipeFileDescriptor < 0) {
+        std::cerr << "Failed to open the pipe: " << filePath << std::endl;
+        return;
     }
+    read(pipeFileDescriptor, &S, sizeof(S));
+    read(pipeFileDescriptor, &Sp, sizeof(Sp));
+    read(pipeFileDescriptor, &sr, sizeof(sr));
+    close(pipeFileDescriptor);
+    Log::cout << "Transmission completed." << S.rows << S.cols << S.isNTT << std::endl;
 }
 
+
 void runSeparationTest() {
-    // do_test(); exit(0);
-    refreshWorkspaceDirectory();
-    MatPoly S_Main, Sp_Main, sr_Query;
-    GlobalTimer::set("Fig.2: Setup");
-    setup_main(S_Main, Sp_Main, sr_Query);
-    GlobalTimer::stop("Fig.2: Setup");
-    // GlobalTimer::set("Fig.2: Query");
-    // query_main(S_Main, Sp_Main, sr_Query);
-    // GlobalTimer::stop("Fig.2: Query");
-    // GlobalTimer::set("Fig.2: Answer");
-    // answer_main();
-    // GlobalTimer::stop("Fig.2: Answer");
-    // GlobalTimer::set("Fig.2: Extract");
-    // extract_main(S_Main, Sp_Main);
-    // GlobalTimer::stop("Fig.2: Extract");
+    MatPoly S, Sp, sr;
+    setupServer(S, Sp, sr, Process::workspace("querying_keys.bin"));
+
+   // do_test(); exit(0);
+   // MatPoly S_Main, Sp_Main, sr_Query;
+   // GlobalTimer::set("Fig.2: Setup");
+   // setup_main(S_Main, Sp_Main, sr_Query);
+   // GlobalTimer::stop("Fig.2: Setup");
+   // GlobalTimer::set("Fig.2: Query");
+   // query_main(S_Main, Sp_Main, sr_Query);
+   // GlobalTimer::stop("Fig.2: Query");
+   // GlobalTimer::set("Fig.2: Answer");
+   // answer_main();
+   // GlobalTimer::stop("Fig.2: Answer");
+   // GlobalTimer::set("Fig.2: Extract");
+   // extract_main(S_Main, Sp_Main);
+   // GlobalTimer::stop("Fig.2: Extract");
 }

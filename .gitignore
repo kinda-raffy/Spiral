@@ -5,6 +5,7 @@ real-run
 !.vscode/launch.json
 !.vscode/c_cpp_properties.json
 
+Process_Workspace/*.bin
 bin/
 *.db
 *.nsight*

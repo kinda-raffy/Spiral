@@ -17,7 +17,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-
 #ifndef __EMSCRIPTEN__
     // #include <omp.h>
     // #include <valgrind/callgrind.h>

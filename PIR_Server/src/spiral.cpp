@@ -1491,9 +1491,9 @@ int main(int argc, char *argv[]) {
 
     // do_test();
     // setup_main();
-    GlobalTimer::set("Run Separation Test");
+    GlobalTimer::set("Running Server");
     runSeparationTest();
-    GlobalTimer::stop("Run Separation Test");
+    GlobalTimer::stop("Running Server");
     #endif
 }
 
@@ -1910,7 +1910,7 @@ void answer_process_query_fast(
 
     // MARK: Process the first dimension.
     start_timing();
-    GlobalTimer::set("Process first dimension via query-database multiplication");
+    GlobalTimer::set("Processing the first dimension using query-database multiplication");
     multiplyQueryByDatabase(
             further_dims_locals.scratch_cts1,
             expansion_locals.reoriented_ciphertexts,
@@ -1918,7 +1918,7 @@ void answer_process_query_fast(
             dim0,
             num_per
     );
-    GlobalTimer::stop("Process first dimension via query-database multiplication");
+    GlobalTimer::stop("Processing the first dimension using query-database multiplication");
     // NOTE: Remove NTT and CRT formatting.
     nttInvAndCrtLiftCiphertexts(
             num_per,
@@ -2980,6 +2980,41 @@ void saveToFile(const FurtherDimsLocals& obj, const std::string &fileName) {
     outFile.close();
 }
 
+void sendToPipe(const FurtherDimsLocals& obj, const std::filesystem::path& filePath) {
+    int pipeFileDescriptor {};
+    mkfifo(filePath.c_str(), 0666);
+    Log::cout << "Connecting to client on " << UnixColours::MAGENTA
+              << filePath.filename() << UnixColours::RESET << " pipe." << std::endl;
+    pipeFileDescriptor = open(filePath.c_str(), O_WRONLY);
+    if (pipeFileDescriptor < 0) {
+        std::cerr << "Failed to open pipe: " << filePath << std::endl;
+        return;
+    }
+    auto writeFDL = [&pipeFileDescriptor](const void* buf, const size_t n) {
+        return write(pipeFileDescriptor, buf, n);
+    };
+   
+    ssize_t status {};
+    status = writeFDL(&obj.num_per, sizeof(obj.num_per));
+    status = writeFDL(&obj.num_bytes_C, sizeof(obj.num_bytes_C));
+    // Send uint64_t arrays.
+    status = writeFDL(obj.result, 2 * obj.num_bytes_C);
+    status = writeFDL(obj.cts, 2 * obj.num_bytes_C);
+    status = writeFDL(obj.scratch_cts1, obj.num_bytes_C);
+    status = writeFDL(obj.scratch_cts2, obj.num_bytes_C);
+    status = writeFDL(obj.scratch_cts_double1, (m2 / n1) * obj.num_bytes_C);
+    status = writeFDL(obj.scratch_cts_double2, (m2 / n1) * obj.num_bytes_C);
+    if (status < 0) {
+        std::cerr << "Failed to write to pipe: " << strerror(errno)
+                  << " (generalised)." << std::endl;
+    } else {
+        Log::cout << "Sent FDL of " << obj.num_per << "x" << obj.num_bytes_C
+                  << " bytes to client through the "<< UnixColours::MAGENTA
+                  << filePath.filename() << UnixColours::RESET << " pipe." << std::endl;
+    }
+    close(pipeFileDescriptor);
+}
+
 void readFromFileStream(
         std::ifstream& inFile,
         std::initializer_list<std::reference_wrapper<MatPoly>> mats
@@ -3047,6 +3082,112 @@ void loadFromFile(FurtherDimsLocals& obj, const std::string &fileName) {
     inFile.close();
 }
 
+ssize_t readAllBytes(int fd, void* buffer, size_t n) {
+    size_t totalBytes = 0;
+    char* buf = static_cast<char*>(buffer);
+    while (totalBytes < n) {
+        ssize_t bytesRead = read(fd, buf + totalBytes, n - totalBytes);
+        bool checkPipeStatus = bytesRead < 0;
+        if (checkPipeStatus) {
+            // Interrupted, try again.
+            if (errno == EINTR) continue;
+            // Other errors.
+            return -1;
+        }
+        const bool isEOF = bytesRead == 0;
+        if (isEOF) break;
+        totalBytes += bytesRead;
+    }
+    return totalBytes;
+}
+
+size_t readFromPipe(
+        int pipeFileDescriptor,
+        std::initializer_list<std::reference_wrapper<MatPoly>> mats
+) {
+    auto readField = [&pipeFileDescriptor](void* buffer, const size_t size) {
+        ssize_t status = readAllBytes(pipeFileDescriptor, buffer, size);
+        if (status == 0) {
+            throw std::out_of_range("Reached end of pipe.");
+        } else if (status < 0) {
+            return false;
+        } return true;
+    };
+    auto readMatPoly = [&readField](MatPoly& mat) {
+        bool isOK {};
+        isOK = readField(&mat.rows, sizeof(mat.rows));
+        isOK = readField(&mat.cols, sizeof(mat.cols));
+        isOK = readField(&mat.isNTT, sizeof(mat.isNTT));
+        size_t dataSize = mat.rows * mat.cols * (mat.isNTT ? crt_count : 1) * coeff_count;
+        if (mat.data != nullptr) {
+            free(mat.data);
+        }
+        mat.data = (uint64_t*) calloc(dataSize, sizeof(uint64_t));
+        isOK = readField(mat.data, dataSize * sizeof(uint64_t));
+        if (!isOK) {
+            std::cerr << "Failed to read from pipe: " << strerror(errno) << " (generalised)." << std::endl;
+            return 0;
+        } else { return 1; }
+    };
+    int count = 0;
+    for (auto&& matRef : mats) {
+        count += readMatPoly(matRef.get());
+    }
+    return count;
+}
+
+void loadFromPipe(
+        std::initializer_list<std::reference_wrapper<MatPoly>> matsToLoadInto,
+        const std::filesystem::path& filePath
+) {
+    int pipeFileDescriptor {};
+    mkfifo(filePath.c_str(), 0666);
+    Log::cout << "Connecting to client on " << UnixColours::MAGENTA
+              << filePath.filename() << UnixColours::RESET << " pipe." << std::endl;
+    pipeFileDescriptor = open(filePath.c_str(), O_RDONLY);
+    if (pipeFileDescriptor < 0) {
+        std::cerr << "Failed to open the pipe: " << filePath << std::endl;
+        return;
+    }
+    size_t ok_retrievals = 0;
+    try {
+        ok_retrievals = readFromPipe(pipeFileDescriptor, matsToLoadInto);
+    } catch (const std::out_of_range&) {
+        // Ignore as we know the size of the mats we want to load into.
+    }
+    Log::cout << "Received " << ok_retrievals << " Matrices through the "
+              << UnixColours::MAGENTA << filePath.filename() << UnixColours::RESET
+              << " pipe." << std::endl;
+    close(pipeFileDescriptor);
+}
+
+void loadFromPipe(std::vector<MatPoly>& keyArray, const std::filesystem::path& filePath) {
+    int pipeFileDescriptor {};
+    mkfifo(filePath.c_str(), 0666);
+    Log::cout << "Connecting to client on " << UnixColours::MAGENTA
+              << filePath.filename() << UnixColours::RESET << " pipe." << std::endl;
+    pipeFileDescriptor = open(filePath.c_str(), O_RDONLY);
+    if (pipeFileDescriptor < 0) {
+        std::cerr << "Failed to open the pipe: " << filePath << std::endl;
+        return;
+    }
+    size_t ok_retrievals = 0;
+    do {
+        MatPoly key;
+        try {
+            ok_retrievals += readFromPipe(pipeFileDescriptor, {key});
+        } catch (const std::out_of_range&) {
+            break;  // Reached end of pipe.
+        }
+        keyArray.push_back(key);
+    } while (true);
+    Log::cout << "Received " << ok_retrievals << " Matrices through the "
+              << UnixColours::MAGENTA << filePath.filename() << UnixColours::RESET
+              << " pipe." << std::endl;
+    close(pipeFileDescriptor);
+}
+
+
 
 bool areMatsEqual(const std::vector<MatPoly>& keyArray1,
                   const std::vector<MatPoly>& keyArray2) {
@@ -3085,194 +3226,13 @@ bool areFDLEqual(const FurtherDimsLocals& fdl1, const FurtherDimsLocals& fdl2) {
     return true;
 }
 
-
-/**
- * @brief Save S, Sp, sr and automorphism keys as a JSON file.
- *
- * @returns Query key, qk=(s, S)
- */
-void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
-    // Create querying keys.
-    GlobalTimer::set("Query key creation");
-    S_Setup = MatPoly(n0, n1, false);
-    Sp_Setup = MatPoly(n0, k_param, false);
-    sr_Setup = MatPoly(1, 1, false);
-    keygen(S_Setup, Sp_Setup, sr_Setup);
-    GlobalTimer::stop("Query key creation");
-    saveToFile({S_Setup, Sp_Setup, sr_Setup}, "querying_keys.bin");
-
-    MatPoly S_Setup_Load, Sp_Setup_Load, sr_Setup_Load;
-    loadFromFile({S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}, "querying_keys.bin");
-    assert(areMatsEqual({S_Setup, Sp_Setup, sr_Setup},
-                        {S_Setup_Load, Sp_Setup_Load, sr_Setup_Load}));
-    // Create automorphism keys.
-    GlobalTimer::set("Automorphism key creation");
-    size_t num_expanded = 1 << num_expansions;
-    size_t m = m2;
-    size_t ell = m / n1;
-    size_t num_bits_to_gen = ell * further_dims + num_expanded;
-    auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
-    // Determine stop round.
-    size_t qe_rest = query_elems_rest;
-    size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
-    if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
-
-    vector<MatPoly> W_exp_right_v, W_exp_v;
-    setup_GetPublicEncryptions(
-        g, sr_Setup_Load, W_exp_right_v,
-        m_exp_right, stopround > 0 ? stopround+1 : 0
-    );
-    setup_GetPublicEncryptions(
-        g, sr_Setup_Load, W_exp_v, m_exp
-    );
-    GlobalTimer::stop("Automorphism key creation");
-
-    saveToFile(W_exp_right_v, "automorphism_right.bin");
-    saveToFile(W_exp_v, "automorphism_left.bin");
-
-    vector<MatPoly> test_W_exp_right_v, test_W_exp_v;
-    loadFromFile(test_W_exp_right_v, "automorphism_right.bin");
-    loadFromFile(test_W_exp_v, "automorphism_left.bin");
-    assert(areMatsEqual(W_exp_right_v, test_W_exp_right_v));
-    assert(areMatsEqual(W_exp_v, test_W_exp_v));
-
-    // Create conversion keys W, V.
-    GlobalTimer::set("Conversion key creation");
-    size_t m_conv_n0 = n0 * m_conv;
-    MatPoly G_scale = buildGadget(n0, m_conv_n0);
-    MatPoly s0 = sr_Setup_Load;
-    MatPoly s0G = mul_by_const(to_ntt(s0), to_ntt(G_scale));
-    MatPoly s0G_padded(n1, m_conv_n0);
-    place(s0G_padded, s0G, 1, 0);
-    MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup_Load, m_conv_n0));
-    MatPoly W(n1, m_conv_n0);
-    add(W, P, s0G_padded);
-
-    size_t m_conv_2 = m_conv * 2;
-    MatPoly V(n1, m_conv_2);
-    MatPoly Sp_Setup_Load_NTT = to_ntt(Sp_Setup_Load);
-    start_timing();
-    {
-        MatPoly gv = to_ntt(buildGadget(1, m_conv));
-        // NOTE: Sp_mp is s_gsw.
-        MatPoly P = to_ntt(get_fresh_public_key_raw(Sp_Setup_Load, m_conv_2));
-        // MatPoly P(n1, m_conv_2);
-        // NOTE: s0 = sr_mp = s_regev. s0 * g_z_conv.
-        MatPoly scaled_gv = mul_by_const(to_ntt(s0), gv);
-        MatPoly together(1, m_conv_2);
-        place(together, scaled_gv, 0, 0);
-        place(together, gv, 0, m_conv);
-        // NOTE: -s_gsw * (s0 * g_z_conv)
-        MatPoly result = multiply(Sp_Setup_Load_NTT, together);
-        MatPoly result_padded(n1, m_conv_2);
-        place(result_padded, result, 1, 0);
-        // NOTE: s_gsw_public + [s_gsw * (s0 * g_z_conv)]
-        add(V, P, result_padded);
-    }
-    GlobalTimer::stop("Conversion key creation");
-
-    saveToFile({W, V}, "conversion_keys.bin");
-
-    MatPoly W_Load, V_Load;
-    loadFromFile({W_Load, V_Load}, "conversion_keys.bin");
-    assert(areMatsEqual({W, V}, {W_Load, V_Load}));
-}
-
-void query_main(
-    const MatPoly& S_Query, const MatPoly& Sp_Query, const MatPoly& sr_Query
+void answer_main(
+    std::vector<MatPoly>& W_exp_right_v_Answer,
+    std::vector<MatPoly>& W_exp_v_Answer,
+    MatPoly& W_Answer,
+    MatPoly& V_Answer
 ) {
-    // Initialise.
-    size_t idx_dim0 = IDX_TARGET / (1 << further_dims);
-    uint64_t scal_const = 1;
-    uint64_t init_val = scale_k;
-    size_t m = m2;
-    size_t ell = m / n1;
-    size_t num_expanded = 1 << num_expansions;
-    size_t num_bits_to_gen = ell * further_dims + num_expanded;
-    size_t qe_rest = query_elems_rest;
-    size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
-    if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
-    NativeLog::cout << "stopround = " << stopround << endl;
-    auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
-    // Perform query dimension encoding.
-    MatPoly sigma(1, 1, false);
-    size_t idx_further  = IDX_TARGET % (1 << further_dims);
-    size_t bits_per = get_bits_per(ell);
-    if (stopround != 0) {
-        // Encode first dimension bits in even coefficients.
-        // Encode subsequent scalars in odd coefficients.
-        GlobalTimer::set("First and subsequent dimension query encoding");
-        sigma.data[2*idx_dim0] = (scal_const * (__uint128_t)init_val) % Q_i;
-        for (size_t i = 0; i < further_dims; i++) {
-            uint64_t bit = (idx_further & (1 << i)) >> i;
-            for (size_t j = 0; j < ell; j++) {
-                size_t idx = i * ell + j;
-                uint64_t val = (1UL << (bits_per * j)) * bit;
-                sigma.data[2*idx+1] = (scal_const * (__uint128_t)val) % Q_i;
-            }
-        }
-        GlobalTimer::stop("First and subsequent dimension query encoding");
-    } else {
-        // First dimension encoding.
-        GlobalTimer::set("First dimension query encoding");
-        size_t idx_for_subround = idx_dim0 % (1 << g);
-        sigma.data[idx_for_subround] = (scal_const * (__uint128_t)init_val) % Q_i;
-        GlobalTimer::stop("First dimension query encoding");
-        // Encode subsequent dimensions.
-        GlobalTimer::set("Subsequent dimension query encoding");
-        size_t offset = qe_rest == 0 ? num_expanded : 0;
-        size_t subround = 0;  // WARN: Confirm subround is not needed here.
-        size_t start_of_encoding = num_bits_to_gen * subround;
-        size_t end_of_encoding = start_of_encoding + num_bits_to_gen;
-        size_t ctr = 0;
-        for (size_t i = 0; i < further_dims; i++) {
-            uint64_t bit = (idx_further & (1 << i)) >> i;
-            for (size_t j = 0; j < ell; j++) {
-                size_t idx = i * ell + j;
-                uint64_t val = (1UL << (bits_per * j)) * bit;
-                if ((idx >= start_of_encoding) && (idx < end_of_encoding)) {
-                    sigma.data[offset + ctr] = (scal_const * (__uint128_t)val) % Q_i;
-                    ctr++;
-                }
-            }
-        }
-        GlobalTimer::stop("Subsequent dimension query encoding");
-    }
-    // Possible query packing?
-    GlobalTimer::set("Query packing");
-    if (stopround != 0) {
-        uint64_t inv_2_g_first = inv_mod(1 << g, Q_i);
-        uint64_t inv_2_g_rest = inv_mod(1 << (stopround+1), Q_i);
-        for (size_t i = 0; i < coeff_count/2; i++) {
-            sigma.data[2*i] = (sigma.data[2*i] * (__uint128_t)inv_2_g_first) % Q_i;
-            sigma.data[2*i+1] = (sigma.data[2*i+1] * (__uint128_t)inv_2_g_rest) % Q_i;
-        }
-    } else {
-        uint64_t inv_2_g = inv_mod(1 << g, Q_i);
-        for (size_t i = 0; i < coeff_count; i++) {
-            sigma.data[i] = (sigma.data[i] * (__uint128_t)inv_2_g) % Q_i;
-        }
-    }
-    GlobalTimer::stop("Query packing");
-    // Query encryption.
-    GlobalTimer::set("Query encryption");
-    MatPoly cv = query_encryptSimpleRegev(sr_Query, sigma);
-    std::vector<MatPoly> round_cv_v;
-    round_cv_v.push_back(cv);
-    for (size_t i = 0; i < (1<<g) - 1; i++) {
-        round_cv_v.emplace_back(n0, 1);
-    }
-    GlobalTimer::stop("Query encryption");
-    // Save the query to a file.
-    saveToFile(round_cv_v, "../../Process_Workspace/query.bin");
-
-    std::vector<MatPoly> round_cv_Load;
-    loadFromFile({round_cv_Load}, "../../Process_Workspace/query.bin");
-    assert(areMatsEqual({round_cv_v}, {round_cv_Load}));
-}
-
-void answer_main() {
-    // Initialize the server.
+    // Initialize server.
     size_t m = m2;
     size_t ell = m / n1;
     size_t num_expanded = 1 << num_expansions;
@@ -3283,31 +3243,24 @@ void answer_main() {
     ExpansionLocals expansionLocals;
     expansionLocals.allocate();
     auto g = (size_t) ceil(log2((double)( num_bits_to_gen )));
-    // Load the public parameters.
-    GlobalTimer::set("Public parameter loading");
-    std::vector<MatPoly> W_exp_right_v_Answer, W_exp_v_Answer;
-    loadFromFile(W_exp_right_v_Answer, "automorphism_right.bin");
-    loadFromFile(W_exp_v_Answer, "automorphism_left.bin");
-    MatPoly W_Answer, V_Answer;
-    loadFromFile({W_Answer, V_Answer}, "conversion_keys.bin");
-    GlobalTimer::stop("Public parameter loading");
     // Load the query.
-    GlobalTimer::set("Query loading");
+    GlobalTimer::set("Loading the query (q)");
     std::vector<MatPoly> round_cv_v_Answer;
-    loadFromFile({round_cv_v_Answer}, "query.bin");
-    GlobalTimer::stop("Query loading");
+    loadFromPipe(round_cv_v_Answer, Process::workspace("query"));
+    // loadFromFile({round_cv_v_Answer}, "query.bin");
+    GlobalTimer::stop("Loading the query (q)");
     // Determine stop round.
     size_t qe_rest = query_elems_rest;
     size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
     if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
     // Initial expansion.
-    GlobalTimer::set("Initial query expansion");
+    GlobalTimer::set("Performing initial expansion through the coefficient algo");
     (void)expandImproved(
         round_cv_v_Answer, g, m_exp,
         W_exp_v_Answer, W_exp_right_v_Answer,
         ell * further_dims, stopround
     );
-    GlobalTimer::stop("Initial query expansion");
+    GlobalTimer::stop("Performing initial expansion through the coefficient algo");
     // Reorder ciphertexts when using stop round.
     if (stopround != 0) {
         round_cv_v_Answer = reorderFromStopround(round_cv_v_Answer, num_expanded, ell * further_dims);
@@ -3334,7 +3287,7 @@ void answer_main() {
     MatPoly ginv_c_raw(m_conv, 1, false);
     MatPoly ginv_c_raw_nttd(m_conv, 1);
     // First dimension expansion.
-    GlobalTimer::set("First dimension query expansion");
+    GlobalTimer::set("Performing first dimension query expansion");
     for (size_t i = 0; i < num_expanded; i++) {
         scalToMat(
             m_conv,
@@ -3359,7 +3312,7 @@ void answer_main() {
             composed_ct_size_coeffs * sizeof(uint64_t)
         );
     }
-    GlobalTimer::stop("First dimension query expansion");
+    GlobalTimer::stop("Performing first dimension query expansion");
     // Run 'conversion'
     MatPoly c_ntti(n0, 1, false);           // n0 x 1
     MatPoly W_switched(n0, 1);                       // n0 x 1, ntt
@@ -3375,7 +3328,7 @@ void answer_main() {
     MatPoly Cp(n1, m);
     MatPoly Cp_raw(n1, m, false);
     // GSW ciphertext expansion.
-    GlobalTimer::set("GSW ciphertext expansion");
+    GlobalTimer::set("Performing GSW ciphertext expansion");
     for (size_t i = 0; i < further_dims; i++) {
         size_t cv_v_offset = num_expanded + i * ell;
         regevToGSW(
@@ -3391,7 +3344,7 @@ void answer_main() {
         // NOTE: Look into this further.
         to_simple_crtd(&g_Q_crtd[(further_dims - 1 - i) * n1 * m * poly_len], Cp_raw);
     }
-    GlobalTimer::stop("GSW ciphertext expansion");
+    GlobalTimer::stop("Performing GSW ciphertext expansion");
     // Perform representation optimisation? and negate further dimensions query.
     auto* g_Q_neg_crtd = (uint64_t *)malloc(query_later_inp_cts_crtd_size_bytes);
     #pragma omp parallel for
@@ -3435,147 +3388,23 @@ void answer_main() {
         furtherDimsLocals
     );
     // Rescale the response via modulus switching.
-    GlobalTimer::set("Rescale response via modulus switching");
+    GlobalTimer::set("Rescaling response using modulus switching");
     modswitch(furtherDimsLocals.result, furtherDimsLocals.cts);
-    GlobalTimer::stop("Rescale response via modulus switching");
+    GlobalTimer::stop("Rescaling response using modulus switching");
     // Save the rescaled response to a file.
-    saveToFile(furtherDimsLocals, "response.bin");
-    FurtherDimsLocals furtherDimsLocals_Load(num_per);
-    loadFromFile(furtherDimsLocals_Load, "response.bin");
-    assert(areFDLEqual(furtherDimsLocals, furtherDimsLocals_Load));
+    sendToPipe(furtherDimsLocals, Process::workspace("response"));
 }
-
-void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
-    // Load server response.
-    GlobalTimer::set("Load server response");
-    size_t dim0 = 1 << num_expansions;
-    size_t num_per = total_n / dim0;
-    FurtherDimsLocals furtherDimsLocals(num_per);
-    loadFromFile(furtherDimsLocals, "response.bin");
-    GlobalTimer::stop("Load server response");
-    // Setup for extraction.
-    MatPoly Sp_mp_nttd_qprime(n0, k_param, false);
-    Sp_mp_nttd_qprime = Sp_Extract;
-    to_ntt_qprime(Sp_mp_nttd_qprime);
-    time_key_gen += end_timing();
-
-    MatPoly ct_inp(n1, n2, false);
-    for (size_t i = 0; i < n1 * n2 * poly_len; i++) {
-        ct_inp.data[i] = furtherDimsLocals.cts[i];
-    }
-    uint64_t q_1 = 4*p_db;
-    // Rescale the final encoding (PIR response).
-    GlobalTimer::set("Rescale final encoding (server response)");
-    MatPoly first_row = pick(ct_inp, 0, 0, 1, ct_inp.cols);
-    MatPoly first_row_sw = getRescaled(first_row, Q_i, arb_qprime);
-    MatPoly rest_rows = pick(ct_inp, 1, 0, ct_inp.rows - 1, ct_inp.cols);
-    MatPoly rest_rows_sw = getRescaled(rest_rows, Q_i, q_1);
-    MatPoly total_resp(n1, n2, false);
-    place(total_resp, first_row_sw, 0, 0);
-    place(total_resp, rest_rows_sw, 1, 0);
-    GlobalTimer::stop("Rescale final encoding (server response)");
-    // Recover takes in rescaled encoding and the secret key and outputs Z.
-    GlobalTimer::set("Perform Z <- Recover_q1_q2(S, r) operation to calculate Z");
-    MatPoly first_row_decoded = pick(total_resp, 0, 0, 1, total_resp.cols);
-    MatPoly rest_rows_decoded = pick(total_resp, 1, 0, total_resp.rows - 1, total_resp.cols);
-    to_ntt_qprime(first_row_decoded);
-    MatPoly s_prod = mul_over_qprime(Sp_mp_nttd_qprime, first_row_decoded);
-    from_ntt_qprime(s_prod);  // Z.
-    GlobalTimer::stop("Perform Z <- Recover_q1_q2(S, r) operation to calculate Z");
-    // Decode the response to get the encoded message.
-    GlobalTimer::set("Perform C <- Decode(Z) operation to get the encoded message");
-    MatPoly M_result(n0, n0, false);
-    for (size_t i = 0; i < s_prod.rows * s_prod.cols * poly_len; i++) {
-        int64_t val_first = s_prod.data[i];
-        if (val_first >= arb_qprime/2) val_first -= arb_qprime;
-        int64_t val_rest = rest_rows_decoded.data[i];
-        if (val_rest >= q_1/2) val_rest -= q_1;
-
-        uint64_t denom = arb_qprime * (q_1/p_db);
-
-        int64_t r = val_first * q_1;
-        r +=  val_rest * arb_qprime;
-        // divide r by arb_qprime, rounding
-        int64_t sign = r >= 0 ? 1 : -1;
-        __int128_t val = r;
-        __int128_t result = (r + sign*((int64_t)denom/2)) / (__int128_t)denom;
-        result = (result + (denom/p_db)*p_db + 2*p_db) % p_db;
-
-        s_prod.data[i] = (uint64_t)result;
-    }
-    M_result = s_prod;  // M.
-    GlobalTimer::stop("Perform C <- Decode(Z) operation to get the encoded message");
-    // Check for correctness.
-    MatPoly corr = pt_real;
-    std::cout << "[" << UnixColours::MAGENTA << "Check"
-              << UnixColours::RESET << "] Message is " << UnixColours::MAGENTA
-              << (is_eq(corr, M_result) ? "correct." : "incorrect.")
-              << UnixColours::RESET << std::endl;
-    // If any, show differences between encoded message and actual.
-    if (show_diff) {
-        for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
-            if (corr.data[i] != M_result.data[i]) {
-                std::cout << i << " " << corr.data[i] << ", " << M_result.data[i] << endl;
-            }
-        }
-    }
-    // Output errors.
-    MatPoly ct(n1, n2, false);
-    if (output_err) {
-        for (size_t i = 0; i < n1 * n2 * poly_len; i++) {
-            ct.data[i] = furtherDimsLocals.cts[i];
-        }
-        MatPoly Z = multiply(S_Extract, ct);
-        MatPoly Z_uncrtd = from_ntt(Z);
-        divide_by_const(Z_uncrtd, Z_uncrtd, p_db, Q_i, p_db);
-        double log_var = get_log_var(Z_uncrtd, corr, show_diff, p_db);
-        std::cout << "variance of diff w/o modswitching: 2^" << log_var << endl;
-        MatPoly scaled_pt = mul_by_const(to_ntt(single_poly(scale_k)), pt_encd_correct);
-        std::vector<int64_t> diffs = get_diffs(from_ntt(Z), from_ntt(scaled_pt), Q_i);
-        std::cout << "diffs: ";
-        std::fstream output;
-        output.open(outputErrFilename, std::fstream::out | std::fstream::app | std::fstream::ate);
-        output_diffs(output, diffs);
-        output.close();
-        std::cout << std::endl;
-    }
-}
-
-
-void setupServer(MatPoly& S, MatPoly& Sp, MatPoly& sr, const std::filesystem::path& filePath) {
-    int pipeFileDescriptor {};
-    mkfifo(filePath.c_str(), 0666);
-    Log::cout << "Waiting for client to connect to " << filePath.filename() << " pipe." << std::endl;
-    pipeFileDescriptor = open(filePath.c_str(), O_RDONLY);
-    Log::cout << "Client connected to " << filePath.filename() << " pipe." << std::endl;
-    if (pipeFileDescriptor < 0) {
-        std::cerr << "Failed to open the pipe: " << filePath << std::endl;
-        return;
-    }
-    read(pipeFileDescriptor, &S, sizeof(S));
-    read(pipeFileDescriptor, &Sp, sizeof(Sp));
-    read(pipeFileDescriptor, &sr, sizeof(sr));
-    close(pipeFileDescriptor);
-    Log::cout << "Transmission completed." << S.rows << S.cols << S.isNTT << std::endl;
-}
-
 
 void runSeparationTest() {
-    MatPoly S, Sp, sr;
-    setupServer(S, Sp, sr, Process::workspace("querying_keys.bin"));
-
-   // do_test(); exit(0);
-   // MatPoly S_Main, Sp_Main, sr_Query;
-   // GlobalTimer::set("Fig.2: Setup");
-   // setup_main(S_Main, Sp_Main, sr_Query);
-   // GlobalTimer::stop("Fig.2: Setup");
-   // GlobalTimer::set("Fig.2: Query");
-   // query_main(S_Main, Sp_Main, sr_Query);
-   // GlobalTimer::stop("Fig.2: Query");
-   // GlobalTimer::set("Fig.2: Answer");
-   // answer_main();
-   // GlobalTimer::stop("Fig.2: Answer");
-   // GlobalTimer::set("Fig.2: Extract");
-   // extract_main(S_Main, Sp_Main);
-   // GlobalTimer::stop("Fig.2: Extract");
+    // do_test(); exit(0);
+    GlobalTimer::set("Load public parameters and conversion keys");
+    std::vector<MatPoly> W_Exp_V, W_Exp_Right_V;
+    loadFromPipe(W_Exp_Right_V, Process::workspace("automorphism_right"));
+    loadFromPipe(W_Exp_V, Process::workspace("automorphism_left"));
+    MatPoly W, V;
+    loadFromPipe({W, V}, Process::workspace("conversion_keys"));
+    GlobalTimer::stop("Load public parameters and conversion keys");
+    GlobalTimer::set("Fig.2: Answer");
+    answer_main(W_Exp_Right_V, W_Exp_V, W, V);
+    GlobalTimer::stop("Fig.2: Answer");
 }

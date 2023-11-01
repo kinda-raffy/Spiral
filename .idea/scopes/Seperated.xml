@@ -1,0 +1,3 @@
+<component name="DependencyValidationManager">
+  <scope name="Seperated" pattern="file[Spiral]:Seperated//*||file:.gitattributes||file:.gitignore||file:CMakeLists.txt||file:Dockerfile" />
+</component>

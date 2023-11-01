@@ -61,8 +61,9 @@ namespace NativeLog {
 
 void generate_random_pt(MatPoly &M) {
     assert(!M.isNTT);
-
+    // Question: How does it create a random polynomial here?
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
+        // Note: p_db is the build variable PVALUE. For 20_32 it is 16.
         M.data[i] = rand() % (p_db);
     }
 }
@@ -175,9 +176,11 @@ double perf_time(std::function<void()> f) {
 }
 
 void setup_H_F_for_n2_eq_2() {
+    // Question: What is F? What does this do? n2 = 2.
     F_mp = MatPoly(n2, n2, false);
     memset(F_inv_vals, 0, sizeof(F_inv_vals));
 
+    // Question: What is H? Why is it being populated with 1's and 0's?
     H_mp = MatPoly(n0, n2, false);
     build_from_constants(H_mp, {
         {1, 0},
@@ -186,6 +189,7 @@ void setup_H_F_for_n2_eq_2() {
 }
 
 void setup_constants() {
+    // Question: Is this a problem?
     if (n2 == 2) {
         setup_H_F_for_n2_eq_2();
     } else if (n2 == 3) {
@@ -200,6 +204,8 @@ void setup_constants() {
     }
 
     MatPoly ZO(n0, n2, false);
+    // Question: What is H and F? Why are they multiplied?
+    // Note: HF nor HF_plain is not being used. Maybe is just a check?
     MatPoly HF(n0, n2);
     MatPoly HF_plain(n0, n2, false);
     multiply(HF, to_ntt(H_mp), to_ntt(F_mp));
@@ -1077,9 +1083,11 @@ void generate_gadgets() {
 }
 
 void load_db() {
+    // Note: This is hard-coded as 256.
     size_t dim0 = 1 << num_expansions;
+    // Note: This resolves to 128.
     size_t num_per = total_n / dim0;
-
+    // Note: Ignored.
     if (random_data) {
         size_t num_words = dummyWorkingSet * dim0 * num_per * n0 * n2;
         B = (uint64_t *)aligned_alloc(64, sizeof(uint64_t) * num_words);
@@ -1130,14 +1138,16 @@ void load_db() {
         pt_correct = MatPoly(n0, n0);
         return;
     }
-
+    // Note: Size of the database (B).
     size_t num_bytes_B = sizeof(uint64_t) * dim0 * num_per * n0 * n2 * poly_len;//2 * poly_len;
     NativeLog::cout << "num_bytes_B: " << num_bytes_B << endl;
     B = (uint64_t *)aligned_alloc(64, num_bytes_B);
     memset(B, 0, num_bytes_B);
 
+    // Note: BB is temporary database?
     uint64_t *BB = (uint64_t *)malloc(n0 * n2 * crt_count * poly_len * sizeof(uint64_t));
-    size_t numBytesPlaintextRaw = n0 * n0 * num_bits_q * poly_len / 8;
+    size_t numBytesPlaintextRaw = n0 * n0 * num_bits_q * poly_len / 8;  // Poly-len is 2048.
+    // Note: Plain-text (pt) raw. Resolves to 13312 bytes.
     uint64_t *pt_raw = (uint64_t *)malloc(numBytesPlaintextRaw);
     memset(pt_raw, 0, numBytesPlaintextRaw);
     uint64_t *pt_buf = (uint64_t *)malloc(n0 * n0 * crt_count * poly_len * sizeof(uint64_t));
@@ -1147,26 +1157,32 @@ void load_db() {
         // TODO
     } else {
         NativeLog::cout << "starting generation of db" << endl;
+        // Note: Figure out the purpose of H and F. Don't think F is used anywhere other than to calculate HF.
         MatPoly H_nttd = to_ntt(H_mp);
         uint64_t *H_encd = H_nttd.data;
         MatPoly pt_tmp(n0, n0, false);
         MatPoly pt_encd_raw(n0, n2, false);
         pts_encd = MatPoly(n0, n2);
         pt = MatPoly(n0, n0);
+        // Note: For index i in the database.
         for (size_t i = 0; i < total_n; i++) {
+            // Note: has_data is false.
             if (has_data) {
                 // TODO
             } else {
                 if (has_data) {
                     // TODO
                 } else {
+                    // Question: How is this polynomial randomly generated?
                     generate_random_pt(pt_tmp);
                 }
 
                 pt_encd_raw = pt_tmp;
+                // Note: For every randomly generated polynomial.
                 for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
                     int64_t val = (int64_t) pt_encd_raw.data[pol];
                     assert(val >= 0 && val < p_db);
+                    // Question: Ensure polynomial is valid?
                     if (val >= (p_db / 2)) {
                         val = val - (int64_t)p_db;
                     }
@@ -1176,8 +1192,9 @@ void load_db() {
                     assert(val >= 0 && val < Q_i);
                     pt_encd_raw.data[pol] = val;
                 }
+                // Note: pts_encd is a global variable that is only used in load_db.
                 to_ntt(pts_encd, pt_encd_raw);
-
+                // Note: If index is equal to the querying index, record it for verification.
                 if (i == IDX_TARGET) {
                     cop(pt_encd_correct, pts_encd);
                     cop(pt_real, pt_tmp);
@@ -1187,20 +1204,27 @@ void load_db() {
             }
 
             // b': i c n z j m
-            size_t ii = i % num_per;
+            size_t ii = i % num_per;  // Note: num_per is 128.
             size_t j = i / num_per;
             for (size_t m = 0; m < n0; m++) {
                 for (size_t c = 0; c < n2; c++) {
                     if (has_data) {
                         // TODO
                     } else {
+                        // Question: What is the coeff_count and how does that correspond to poly_len. They both are 2048.
+                        // Note: pts_encd is a temporary store for an NTT-compliant random polynomial.
+                        // Debug: crt_count is 2.
+                        // Question: What is it indexing?
                         memcpy(BB, &pts_encd.data[(m * n2 + c) * crt_count * coeff_count], crt_count * coeff_count * sizeof(uint64_t));
+                        // Note: For the poly_len.
                         for (size_t z = 0; z < poly_len; z++) {
                             size_t idx = z * (num_per * n2 * dim0 * n0) +
                                          ii * (n2 * dim0 * n0) +
                                          c * (dim0 * n0) +
                                          j * (n0) + m;
-
+                            // Note: Packs two 32 bit integers
+                            //       (BB[z] and (BB[poly_len + z] << 32))
+                            //       into one 64 bit integer (B[idx]).
                             B[idx] = BB[z] | (BB[poly_len + z] << 32);
                         }
                     }

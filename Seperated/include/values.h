@@ -8,6 +8,7 @@ constexpr long coeff_count_pow_of_2 = 11;
 constexpr size_t coeff_count = 1 << coeff_count_pow_of_2;
 constexpr size_t crt_count = 2;
 constexpr size_t pol_bytes = crt_count * coeff_count * sizeof(uint64_t);
+// Question: Clarify into how this is calculated. Identical to coeff_count?
 constexpr size_t poly_len = 1 << coeff_count_pow_of_2; // 2048;
 
 constexpr uint32_t p_i = 268369921; // 2^28 - 2^16 + 1

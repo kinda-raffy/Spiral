@@ -3246,8 +3246,14 @@ void answer_main(
     // Load the query.
     GlobalTimer::set("Loading the query (q)");
     std::vector<MatPoly> round_cv_v_Answer;
+    /** Attach networking here.
+     * @section Answer
+     * @step 3.1
+     *
+     * @note Load the encrypted query form the client into an std::vector of
+     *       MatPoly objects.
+     */
     loadFromPipe(round_cv_v_Answer, Process::workspace("query"));
-    // loadFromFile({round_cv_v_Answer}, "query.bin");
     GlobalTimer::stop("Loading the query (q)");
     // Determine stop round.
     size_t qe_rest = query_elems_rest;
@@ -3391,17 +3397,35 @@ void answer_main(
     GlobalTimer::set("Rescaling response using modulus switching");
     modswitch(furtherDimsLocals.result, furtherDimsLocals.cts);
     GlobalTimer::stop("Rescaling response using modulus switching");
-    // Save the rescaled response to a file.
+    /** Attach networking here.
+     * @section Answer
+     * @step 3.2
+     *
+     * @note Send the server response to the client. Response is encoded within a
+     *       FurtherDimsLocals object constructed with @param num_per.
+     */
     sendToPipe(furtherDimsLocals, Process::workspace("response"));
 }
 
 void runSeparationTest() {
-    // do_test(); exit(0);
     GlobalTimer::set("Load public parameters and conversion keys");
     std::vector<MatPoly> W_Exp_V, W_Exp_Right_V;
+    /** Attach networking here.
+     * @section Setup
+     * @step 1.1
+     *
+     * @note Load the automorphism keys from the server into an std::vector
+     *       of MatPoly objects.
+     */
     loadFromPipe(W_Exp_Right_V, Process::workspace("automorphism_right"));
     loadFromPipe(W_Exp_V, Process::workspace("automorphism_left"));
     MatPoly W, V;
+    /** Attach networking here.
+     * @section Setup
+     * @step 1.2
+     *
+     * @note Load W and V from the server into separate MatPoly objects.
+     */
     loadFromPipe({W, V}, Process::workspace("conversion_keys"));
     GlobalTimer::stop("Load public parameters and conversion keys");
     GlobalTimer::set("Fig.2: Answer");

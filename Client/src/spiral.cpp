@@ -3192,7 +3192,7 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
     size_t stopround = qe_rest == 0 ? ((size_t) ceil(log2((double)( ell * further_dims )))) : 0;
     if (ell * further_dims > num_expanded) stopround = 0; // don't use this trick for these weird dimensions
     // Generate automorphism keys.
-    vector<MatPoly> W_exp_right_v, W_exp_v;
+    std::vector<MatPoly> W_exp_right_v, W_exp_v;
     setup_GetPublicEncryptions(
         g, sr_Setup, W_exp_right_v,
         m_exp_right, stopround > 0 ? stopround+1 : 0
@@ -3201,6 +3201,13 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
         g, sr_Setup, W_exp_v, m_exp
     );
     GlobalTimer::stop("Creating automorphism keys (W_i)");
+    /** Attach networking here.
+     * @section Setup
+     * @step 1.1
+     *
+     * @note Send the automorphism keys to the server. Automorphism keys are
+     *       a std::vector of MatPoly objects.
+     */
     sendToPipe(W_exp_right_v, Process::workspace("automorphism_right"));
     sendToPipe(W_exp_v, Process::workspace("automorphism_left"));
     // Create conversion key W.
@@ -3238,6 +3245,13 @@ void setup_main(MatPoly& S_Setup, MatPoly& Sp_Setup, MatPoly& sr_Setup) {
     }
     GlobalTimer::stop("Creating conversion keys (W, V)");
     Log::cout  << "Note the permutation matrix (Π) is hard coded in the server." << std::endl;
+    /** Attach networking here.
+     * @section Setup
+     * @step 1.2
+     *
+     * @note Send the conversion keys (W, V) to the server. W and V are both
+     *       MatPoly objects.
+     */
     sendToPipe({W, V}, Process::workspace("conversion_keys"));
 }
 
@@ -3301,7 +3315,7 @@ void query_main(
         }
         GlobalTimer::stop("Subsequent dimension query encoding");
     }
-    // Possible query packing?
+    // Pack the query.
     GlobalTimer::set("Performing query packing to generate a packed polynomial");
     if (stopround != 0) {
         uint64_t inv_2_g_first = inv_mod(1 << g, Q_i);
@@ -3326,7 +3340,13 @@ void query_main(
         round_cv_v.emplace_back(n0, 1);
     }
     GlobalTimer::stop("c <- Encrypting the query");
-    // Send the query to server.
+    /** Attach networking here.
+     * @section Query
+     * @step 2.1
+     *
+     * @note Send the encrypted query to the server. The query is a std::vector
+     *       of MatPoly objects.
+     */
     sendToPipe(round_cv_v, Process::workspace("query"));
 }
 
@@ -3336,6 +3356,15 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     size_t dim0 = 1 << num_expansions;
     size_t num_per = total_n / dim0;
     FurtherDimsLocals furtherDimsLocals(num_per);
+    /** Attach networking here.
+     * @section Extract
+     * @step 4.1
+     *
+     * @note Receive the server response from the server. The server response
+     *       is a FurtherDimsLocals object constructed with @param `num_per`.
+     *
+     *       This is the final step :).
+     */
     loadFromPipe(furtherDimsLocals, Process::workspace("response"));
     GlobalTimer::stop("Retrieving the server response (r)");
     // Setup for extraction.
@@ -3435,7 +3464,6 @@ void refreshWorkspaceDirectory() {
 }
 
 void runSeparationTest() {
-    // do_test(); exit(0);
     refreshWorkspaceDirectory();
     MatPoly S_Main, Sp_Main, sr_Query;
     GlobalTimer::set("Fig.2: Setup");

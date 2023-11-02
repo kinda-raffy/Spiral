@@ -99,8 +99,8 @@ void generate_random_pt(MatPoly &M) {
     // Question: How does it create a random polynomial here?
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
         // Note: p_db is the build variable PVALUE. For 20_32 it is 16.
-        // M.data[i] = rand() % (p_db);
-        M.data[i] = 8237948 % (p_db);
+        M.data[i] = rand() % (p_db);
+        // M.data[i] = 8237948 % (p_db);
     }
 }
 
@@ -3509,7 +3509,8 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
               << UnixColours::RESET << "] Message is " << UnixColours::MAGENTA
               << (is_eq(corr, M_result) ? "correct." : "incorrect.")
               << UnixColours::RESET << std::endl;
-    if (true) {
+    bool showMessages = false;
+    if (showMessages) {
         Log::cout << "Decoded message: ";
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
             Log::cout << M_result.data[i] << ",";

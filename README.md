@@ -183,6 +183,13 @@ execution environments on two separate terminals.
 - The `Client` should always be ran before the `Server`. Otherwise, the
   receiving pipe on `Server` might hang.
 
+## Client-Server Transactions
+
+The `Client` and `Server` executables communicate with each other using OS pipes.
+The following diagram describes the transactions that occur between the two executables.
+
+![Client-Server Transactions](.github/images/client_server_transactions.png)
+
 ## Issues
 
 If you face any issues during the build or execution process, please open an

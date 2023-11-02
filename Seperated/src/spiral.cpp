@@ -22,6 +22,20 @@ bool output_err = false;
 static size_t total_offline_size_b = 0;
 
 
+namespace UnixColours {
+    const std::string RED = "\033[31m";
+    const std::string GREEN = "\033[32m";
+    const std::string YELLOW = "\033[33m";
+    const std::string BLUE = "\033[34m";
+    const std::string MAGENTA = "\033[35m";
+    const std::string CYAN = "\033[36m";
+    const std::string WHITE = "\033[37m";
+    const std::string BOLD = "\033[1m";
+    const std::string UNDERLINE = "\033[4m";
+    const std::string RESET = "\033[0m";
+}
+
+
 #ifdef NATIVELOG
 namespace NativeLog {
     struct Cout {
@@ -58,13 +72,35 @@ namespace NativeLog {
 }
 #endif
 
+namespace Log {
+    struct Cout {
+        std::ostringstream oss;
+        template <typename T>
+        Cout& operator<<(const T& val) {
+            oss << val;
+            return *this;
+        }
+        Cout& operator<<(std::ostream& (*manipulator)(std::ostream&)) {
+            if (manipulator == static_cast<std::ostream& (*)(std::ostream&)>(std::endl)) {
+                oss << "\n";
+                std::cout << "[" << UnixColours::CYAN << "Log"
+                          << UnixColours::RESET << "] " << oss.str();
+                oss.str("");
+                oss.clear();
+            }
+            return *this;
+        }
+    };
+    Cout cout;
+}
 
 void generate_random_pt(MatPoly &M) {
     assert(!M.isNTT);
     // Question: How does it create a random polynomial here?
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
         // Note: p_db is the build variable PVALUE. For 20_32 it is 16.
-        M.data[i] = rand() % (p_db);
+        // M.data[i] = rand() % (p_db);
+        M.data[i] = 8237948 % (p_db);
     }
 }
 
@@ -1300,21 +1336,6 @@ void do_MatPol_test() {
 }
 
 void testScalToMatAndConversion();
-
-
-namespace UnixColours {
-    const std::string RED = "\033[31m";
-    const std::string GREEN = "\033[32m";
-    const std::string YELLOW = "\033[33m";
-    const std::string BLUE = "\033[34m";
-    const std::string MAGENTA = "\033[35m";
-    const std::string CYAN = "\033[36m";
-    const std::string WHITE = "\033[37m";
-    const std::string BOLD = "\033[1m";
-    const std::string UNDERLINE = "\033[4m";
-    const std::string RESET = "\033[0m";
-}
-
 
 #ifdef TIMERLOG
 namespace GlobalTimer {
@@ -3488,6 +3509,18 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
               << UnixColours::RESET << "] Message is " << UnixColours::MAGENTA
               << (is_eq(corr, M_result) ? "correct." : "incorrect.")
               << UnixColours::RESET << std::endl;
+    if (true) {
+        Log::cout << "Decoded message: ";
+        for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
+            Log::cout << M_result.data[i] << ",";
+        }
+        Log::cout << std::endl;
+        Log::cout << "Actual message: ";
+        for (size_t i = 0; i < corr.rows * corr.cols * coeff_count; i++) {
+            Log::cout << corr.data[i] << ",";
+        }
+        Log::cout << std::endl;
+    }
     // If any, show differences between encoded message and actual.
     if (show_diff) {
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {

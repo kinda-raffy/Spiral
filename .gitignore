@@ -45,7 +45,6 @@ errs*.csv
 err*.txt
 *.pyc
 *checkpoint.ipynb
-*.png
 
 # CMake
 build*/

@@ -94,16 +94,6 @@ namespace Log {
     Cout cout;
 }
 
-void generate_random_pt(MatPoly &M) {
-    assert(!M.isNTT);
-    // Question: How does it create a random polynomial here?
-    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
-        // Note: p_db is the build variable PVALUE. For 20_32 it is 16.
-        M.data[i] = rand() % (p_db);
-        // M.data[i] = 8237948 % (p_db);
-    }
-}
-
 void get_gadget_1(MatPoly &G) { // n0 x m1
     // identity
     for (size_t j = 0; j < m1; j++) {
@@ -1118,62 +1108,116 @@ void generate_gadgets() {
     buildGadget(G_hat);
 }
 
+namespace DevelopmentData {
+    const char base16ToHex[16] = {
+        '0', '1', '2', '3',
+        '4', '5', '6', '7',
+        '8', '9', 'a', 'b',
+        'c', 'd', 'e', 'f'
+    };
+
+    int hexCharToBase16(char hexChar) {
+        if (hexChar >= '0' && hexChar <= '9') return hexChar - '0';
+        if (hexChar >= 'a' && hexChar <= 'f') return hexChar - 'a' + 10;
+        if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
+        throw std::invalid_argument("Invalid hexadecimal character");
+    }
+
+    const std::vector<std::string> hashes = {
+            "6ef02a389c6415e7dc6ac8cdf0fd65c83b678022e9c0bb37c6feedf318297c43"
+            // "848486bcaf9b3c5a7d86d7752be8dc059309384ab81580e382ce3d2f08164a9b",
+            // "78f646eca442535f7c82ed7928c3da0565d4f9878b460fb922c170f098078b08",
+            // "c22cae2c19ecf38b4827ac042206a857b60c72f2bd95aef9c77f2f4c52ebc859",
+            // "49be620f3c7bab7e08cd1174546b640eeb570dd7de5a176adb2917edad45d4fb"
+    };
+
+    // const std::unordered_set<std::string> hashes = {
+    //         "6ef02a389c6415e7dc6ac8cdf0fd65c83b678022e9c0bb37c6feedf318297c43"
+    // };
+
+    std::string randomHash() {
+        return hashes.at(rand() % hashes.size());
+    }
+    // std::string randomHash() {
+    //     return hashes.at(rand() % hashes.size());
+    // }
+}
+
+void generate_random_pt(MatPoly &M) {
+    assert(!M.isNTT);
+    // Question: How does it create a random polynomial here?
+    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
+        // Note: p_db is the build variable PVALUE. For 20_32 it is 16.
+        M.data[i] = rand() % (p_db);
+    }
+}
+
+void generate_specific_pt(MatPoly &M) {
+    assert(!M.isNTT);
+    std::string hash = DevelopmentData::randomHash();
+    size_t hashIterationPointer = 0;
+
+
+    const size_t hashLength = 64;
+    const size_t coefficientRange = p_db;
+    const size_t hexCharacterCount = 16;
+    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
+    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
+    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
+    if (coefficientRange < hexCharacterCount) {
+        characterWriteSpace += 1;
+    }
+    if (characterWriteSpace == 0) {
+        characterWriteSpace = 1;
+    }
+
+    const size_t coefficientSpace = M.rows * M.cols * poly_len;
+    const size_t totalWriteSpace = hashLength * characterWriteSpace;
+    assert(coefficientSpace > totalWriteSpace);
+    Log::cout << "Coefficient to Write Space ratio " << coefficientSpace << " : " << totalWriteSpace << std::endl;
+    if (characterWriteSpace == 1) {
+        for (size_t i = 0; i < coefficientSpace; i++) {
+            if (hashIterationPointer < hash.size()) {
+                int hex = DevelopmentData::hexCharToBase16(hash.at(hashIterationPointer++));
+                assert(hex >= 0 && hex < 16);
+                M.data[i] = hex;
+            } else {
+                M.data[i] = 0;
+            }
+        }
+    } else {
+        int bucketMaxValue = coefficientRange - 1;
+        for (size_t i = 0; i < coefficientSpace; i += characterWriteSpace) {
+            if (hashIterationPointer < hash.size()) {
+                int hex = DevelopmentData::hexCharToBase16(hash.at(hashIterationPointer++));
+                // Perform bucketing.
+                for (size_t j = 0; j < characterWriteSpace; j++) {
+                    // Note: Redundant space is set to 0.
+                    int bucketValue = std::min(bucketMaxValue, hex);
+                    assert(bucketValue >= 0 or bucketValue < p_db);
+                    M.data[i + j] = bucketValue;
+                    hex -= bucketValue;
+                }
+                if (hex != 0) throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
+            } else {
+                for (size_t j = 0; j < characterWriteSpace; j++) {
+                    if ((i + j) < coefficientSpace) {
+                        M.data[i + j] = 0;
+                    }
+                }
+            }
+        }
+    }
+    if (hashIterationPointer != hashLength) throw std::runtime_error("Failed to encode entire hash into polynomial.");
+}
+
 void load_db() {
     // Note: This is hard-coded as 256.
     size_t dim0 = 1 << num_expansions;
     // Note: This resolves to 128.
     size_t num_per = total_n / dim0;
     // Note: Ignored.
-    if (random_data) {
-        size_t num_words = dummyWorkingSet * dim0 * num_per * n0 * n2;
-        B = (uint64_t *)aligned_alloc(64, sizeof(uint64_t) * num_words);
-        random_device rd;
-        mt19937_64 gen2(rd()); // NOT SECURE
-        uniform_int_distribution<uint64_t> dist(numeric_limits<uint64_t>::min(), numeric_limits<uint64_t>::max());
-        uint64_t val = dist(gen2) % (p_db/4);
-
-        for (size_t r = 0; r < n0; r++) {
-            for (size_t c = 0; c < n2; c++) {
-                pt_real.data[(r * n2 + c) * poly_len] = val;
-            }
-        }
-
-        MatPoly pt_encd_raw = pt_real;
-        for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
-            int64_t val = (int64_t) pt_encd_raw.data[pol];
-            assert(val >= 0 && val < p_db);
-            if (val >= (p_db / 2)) {
-                val = val - (int64_t)p_db;
-            }
-            if (val < 0) {
-                val += Q_i;
-            }
-            assert(val >= 0 && val < Q_i);
-            pt_encd_raw.data[pol] = val;
-        }
-        to_ntt(pts_encd, pt_encd_raw);
-        for (size_t dws = 0; dws < dummyWorkingSet; dws++) {
-            for (size_t i = 0; i < num_per; i++) {
-                for (size_t j = 0; j < n2; j++) {
-                    for (size_t k = 0; k < dim0; k++) {
-                        for (size_t l = 0; l < n0; l++) {
-                            size_t idx = dws * (num_per * n2 * dim0 * n0)
-                                        + i * (n2 * dim0 * n0)
-                                        + j * (dim0 * n0)
-                                        + k * (n0)
-                                        + l;
-                            uint64_t val1 = pts_encd.data[(j * n0 + l)*crt_count*poly_len];
-                            uint64_t val2 = pts_encd.data[(j * n0 + l)*crt_count*poly_len + poly_len];
-                            B[idx] = val1 + (val2 << 32);
-                        }
-                    }
-                }
-            }
-        }
-        pt_encd_correct = MatPoly(n0, n2);
-        pt_correct = MatPoly(n0, n0);
-        return;
-    }
+    if (random_data) throw std::runtime_error("Random data has been deleted.");
     // Note: Size of the database (B).
     size_t num_bytes_B = sizeof(uint64_t) * dim0 * num_per * n0 * n2 * poly_len;//2 * poly_len;
     NativeLog::cout << "num_bytes_B: " << num_bytes_B << endl;
@@ -1189,87 +1233,69 @@ void load_db() {
     uint64_t *pt_buf = (uint64_t *)malloc(n0 * n0 * crt_count * poly_len * sizeof(uint64_t));
     memset(pt_buf, 0, n0 * n0 * crt_count * poly_len * sizeof(uint64_t));
 
-    if (has_file && load) {
-        // TODO
-    } else {
-        NativeLog::cout << "starting generation of db" << endl;
-        // Note: Figure out the purpose of H and F. Don't think F is used anywhere other than to calculate HF.
-        MatPoly H_nttd = to_ntt(H_mp);
-        uint64_t *H_encd = H_nttd.data;
-        MatPoly pt_tmp(n0, n0, false);
-        MatPoly pt_encd_raw(n0, n2, false);
-        pts_encd = MatPoly(n0, n2);
-        pt = MatPoly(n0, n0);
-        // Note: For index i in the database.
-        for (size_t i = 0; i < total_n; i++) {
-            // Note: has_data is false.
-            if (has_data) {
-                // TODO
-            } else {
-                if (has_data) {
-                    // TODO
-                } else {
-                    // Question: How is this polynomial randomly generated?
-                    generate_random_pt(pt_tmp);
-                }
-
-                pt_encd_raw = pt_tmp;
-                // Note: For every randomly generated polynomial.
-                for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
-                    int64_t val = (int64_t) pt_encd_raw.data[pol];
-                    assert(val >= 0 && val < p_db);
-                    // Question: Ensure polynomial is valid?
-                    if (val >= (p_db / 2)) {
-                        val = val - (int64_t)p_db;
-                    }
-                    if (val < 0) {
-                        val += Q_i;
-                    }
-                    assert(val >= 0 && val < Q_i);
-                    pt_encd_raw.data[pol] = val;
-                }
-                // Note: pts_encd is a global variable that is only used in load_db.
-                to_ntt(pts_encd, pt_encd_raw);
-                // Note: If index is equal to the querying index, record it for verification.
-                if (i == IDX_TARGET) {
-                    cop(pt_encd_correct, pts_encd);
-                    cop(pt_real, pt_tmp);
-                    to_ntt(pt, pt_tmp);
-                    cop(pt_correct, pt);
-                }
+    NativeLog::cout << "starting generation of db" << endl;
+    // Note: Figure out the purpose of H and F. Don't think F is used anywhere other than to calculate HF.
+    MatPoly H_nttd = to_ntt(H_mp);
+    uint64_t *H_encd = H_nttd.data;
+    MatPoly pt_tmp(n0, n0, false);
+    MatPoly pt_encd_raw(n0, n2, false);
+    pts_encd = MatPoly(n0, n2);
+    pt = MatPoly(n0, n0);
+    // Note: For index i in the database.
+    for (size_t i = 0; i < total_n; i++) {
+        // Question: How is this polynomial randomly generated?
+        if (i == IDX_TARGET) {
+            generate_specific_pt(pt_tmp);
+        } else {
+            generate_random_pt(pt_tmp);
+        }
+        pt_encd_raw = pt_tmp;
+        // Note: For every randomly generated polynomial.
+        for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
+            int64_t val = (int64_t) pt_encd_raw.data[pol];
+            assert(val >= 0 && val < p_db);
+            // Question: Ensure polynomial is valid?
+            if (val >= (p_db / 2)) {
+                val = val - (int64_t)p_db;
             }
-
-            // b': i c n z j m
-            size_t ii = i % num_per;  // Note: num_per is 128.
-            size_t j = i / num_per;
-            for (size_t m = 0; m < n0; m++) {
-                for (size_t c = 0; c < n2; c++) {
-                    if (has_data) {
-                        // TODO
-                    } else {
-                        // Question: What is the coeff_count and how does that correspond to poly_len. They both are 2048.
-                        // Note: pts_encd is a temporary store for an NTT-compliant random polynomial.
-                        // Debug: crt_count is 2.
-                        // Question: What is it indexing?
-                        memcpy(BB, &pts_encd.data[(m * n2 + c) * crt_count * coeff_count], crt_count * coeff_count * sizeof(uint64_t));
-                        // Note: For the poly_len.
-                        for (size_t z = 0; z < poly_len; z++) {
-                            size_t idx = z * (num_per * n2 * dim0 * n0) +
-                                         ii * (n2 * dim0 * n0) +
-                                         c * (dim0 * n0) +
-                                         j * (n0) + m;
-                            // Note: Packs two 32 bit integers
-                            //       (BB[z] and (BB[poly_len + z] << 32))
-                            //       into one 64 bit integer (B[idx]).
-                            B[idx] = BB[z] | (BB[poly_len + z] << 32);
-                        }
-                    }
-                }
+            if (val < 0) {
+                val += Q_i;
             }
+            assert(val >= 0 && val < Q_i);
+            pt_encd_raw.data[pol] = val;
+        }
+        // Note: pts_encd is a global variable that is only used in load_db.
+        to_ntt(pts_encd, pt_encd_raw);
+        // Note: If index is equal to the querying index, record it for verification.
+        if (i == IDX_TARGET) {
+            cop(pt_encd_correct, pts_encd);
+            cop(pt_real, pt_tmp);
+            to_ntt(pt, pt_tmp);
+            cop(pt_correct, pt);
         }
 
-        if (has_file && !load) {
-            // TODO
+        // b': i c n z j m
+        size_t ii = i % num_per;  // Note: num_per is 128.
+        size_t j = i / num_per;
+        for (size_t m = 0; m < n0; m++) {
+            for (size_t c = 0; c < n2; c++) {
+                // Question: What is the coeff_count and how does that correspond to poly_len. They both are 2048.
+                // Note: pts_encd is a temporary store for an NTT-compliant random polynomial.
+                // Debug: crt_count is 2.
+                // Question: What is it indexing?
+                memcpy(BB, &pts_encd.data[(m * n2 + c) * crt_count * coeff_count], crt_count * coeff_count * sizeof(uint64_t));
+                // Note: For the poly_len.
+                for (size_t z = 0; z < poly_len; z++) {
+                    size_t idx = z * (num_per * n2 * dim0 * n0) +
+                                 ii * (n2 * dim0 * n0) +
+                                 c * (dim0 * n0) +
+                                 j * (n0) + m;
+                    // Note: Packs two 32 bit integers
+                    //       (BB[z] and (BB[poly_len + z] << 32))
+                    //       into one 64 bit integer (B[idx]).
+                    B[idx] = BB[z] | (BB[poly_len + z] << 32);
+                }
+            }
         }
     }
 
@@ -3509,18 +3535,53 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
               << UnixColours::RESET << "] Message is " << UnixColours::MAGENTA
               << (is_eq(corr, M_result) ? "correct." : "incorrect.")
               << UnixColours::RESET << std::endl;
-    bool showMessages = false;
+
+
+    const size_t hashLength = 64;
+    const size_t coefficientRange = p_db;
+    const size_t hexCharacterCount = 16;
+    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
+    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
+    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
+    if (coefficientRange < hexCharacterCount) {
+        characterWriteSpace += 1;
+    }
+    if (characterWriteSpace == 0) {
+        characterWriteSpace = 1;
+    }
+
+    size_t plaintextEncodingLength = M_result.rows * M_result.cols * coeff_count;
+    size_t messageEncodedLength = characterWriteSpace * hashLength;
+    assert(messageEncodedLength < plaintextEncodingLength);
+    std::stringstream decodedMessageStream;
+    if (characterWriteSpace == 1) {
+        for (size_t i = 0; i < messageEncodedLength; i++) {
+            decodedMessageStream << DevelopmentData::base16ToHex[M_result.data[i]];
+        }
+    } else {
+        for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
+            size_t base16Sum = 0;
+            for (size_t j = 0; j < characterWriteSpace; j++) {
+                base16Sum += M_result.data[i + j];
+            }
+            decodedMessageStream << DevelopmentData::base16ToHex[base16Sum];
+        }
+    }
+
+    Log::cout << "Decoded message: " << decodedMessageStream.str() << std::endl;
+
+    bool showMessages = true;
     if (showMessages) {
         Log::cout << "Decoded message: ";
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
             Log::cout << M_result.data[i] << ",";
         }
         Log::cout << std::endl;
-        Log::cout << "Actual message: ";
-        for (size_t i = 0; i < corr.rows * corr.cols * coeff_count; i++) {
-            Log::cout << corr.data[i] << ",";
-        }
-        Log::cout << std::endl;
+        // Log::cout << "Actual message: ";
+        // for (size_t i = 0; i < corr.rows * corr.cols * coeff_count; i++) {
+        //     Log::cout << corr.data[i] << ",";
+        // }
+        // Log::cout << std::endl;
     }
     // If any, show differences between encoded message and actual.
     if (show_diff) {
@@ -3558,13 +3619,21 @@ void runSeperationTest() {
     GlobalTimer::set("Fig.2: Setup");
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
-    GlobalTimer::set("Fig.2: Query");
-    query_main(S_Main, Sp_Main, sr_Query);
-    GlobalTimer::stop("Fig.2: Query");
-    GlobalTimer::set("Fig.2: Answer");
-    answer_main();
-    GlobalTimer::stop("Fig.2: Answer");
-    GlobalTimer::set("Fig.2: Extract");
-    extract_main(S_Main, Sp_Main);
-    GlobalTimer::stop("Fig.2: Extract");
+    std::string query_command {"halt"};
+    do {
+        std::cout << "Enter query index: " << std::flush;
+        std::cin >> query_command;
+        IDX_TARGET = strtol(query_command.c_str(), NULL, 10);
+        IDX_DIM0 = IDX_TARGET / (1 << further_dims);
+        GlobalTimer::set("Fig.2: Query");
+        query_main(S_Main, Sp_Main, sr_Query);
+        GlobalTimer::stop("Fig.2: Query");
+        GlobalTimer::set("Fig.2: Answer");
+        answer_main();
+        GlobalTimer::stop("Fig.2: Answer");
+        GlobalTimer::set("Fig.2: Extract");
+        extract_main(S_Main, Sp_Main);
+        GlobalTimer::stop("Fig.2: Extract");
+    } while (query_command != "halt");
+    Log::cout << "Done." << std::endl;
 }

@@ -12,6 +12,8 @@
 #include <queue>
 #include <mutex>
 #include <assert.h>
+#include <algorithm>
+#include <unordered_set>
 
 #ifndef __EMSCRIPTEN__
     // #include <omp.h>

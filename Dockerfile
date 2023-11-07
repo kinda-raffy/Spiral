@@ -12,5 +12,5 @@ USER ubuntu
 WORKDIR /home/ubuntu
 RUN git clone https://github.com/Microsoft/vcpkg.git && \
     ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
-RUN sudo ./vcpkg/vcpkg install hexl
+RUN sudo ./vcpkg/vcpkg install hexl nlohmann-json
 RUN sudo pip install tabulate

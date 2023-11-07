@@ -7,6 +7,8 @@ add_executable(Seperated ${SRC_FILES} ${HEADER_FILES})
 target_include_directories(Seperated PUBLIC include)
 target_include_directories(Seperated PUBLIC /home/ubuntu/vcpkg/installed/)
 target_link_libraries(Seperated PRIVATE HEXL::hexl)
+target_link_libraries(Seperated PRIVATE nlohmann_json::nlohmann_json)
+
 add_compile_definitions(
         TEXP=$(TEXP)
         TEXPRIGHT=$(TEXPRIGHT)

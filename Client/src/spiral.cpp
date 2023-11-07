@@ -110,7 +110,7 @@ namespace Log {
 #endif
 
 
-void generate_random_pt(MatPoly &M) {
+void generateRandomPt(MatPoly &M) {
     assert(!M.isNTT);
 
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
@@ -1211,7 +1211,7 @@ void load_db() {
                 if (has_data) {
                     // TODO
                 } else {
-                    generate_random_pt(pt_tmp);
+                    generateRandomPt(pt_tmp);
                 }
 
                 pt_encd_raw = pt_tmp;
@@ -1364,10 +1364,34 @@ namespace GlobalTimer {
 
 
 namespace Process {
-    const std::filesystem::path workspacePath("/home/ubuntu/Process_Workspace/");
-
+    const std::filesystem::path processPath("/home/ubuntu/Process_Workspace/");
     std::filesystem::path workspace(const std::string& filename) {
-        return workspacePath / std::filesystem::path(filename);
+        return processPath / std::filesystem::path(filename);
+    }
+
+    const std::filesystem::path dataPath("../../Database_Data");
+    std::filesystem::path dataSpace(const std::string& filename) {
+        return dataPath / std::filesystem::path(filename);
+    }
+
+    namespace Data {
+        // Note: const is only modified during load.
+        const std::unordered_set<std::string>& getHashes(const bool set = false) {
+            static std::unordered_set<std::string> hashes;
+            if (!set) assert(!hashes.empty());
+            return hashes;
+        }
+
+        void load_hashes(const std::filesystem::path& jsonFile) {
+            std::ifstream jsonFileStream(jsonFile);
+            nlohmann::json jsonData;
+            jsonFileStream >> jsonData;
+
+            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(getHashes(true));
+            for (auto& element : jsonData[0].items()) {
+                hashesRef.insert(element.value().get<string>());
+            }
+        }
     }
 }
 
@@ -1485,8 +1509,8 @@ int main(int argc, char *argv[]) {
     }
 
     // GlobalTimer::set("Database Generation");
-    Log::cout <<"Generating a database for final message verification." << std::endl;
-    load_db();
+    // Log::cout <<"Generating a database for final message verification." << std::endl;
+    // load_db();
     // GlobalTimer::stop("Database Generation");
 
     // do_test();
@@ -3350,6 +3374,22 @@ void query_main(
     sendToPipe(round_cv_v, Process::workspace("query"));
 }
 
+namespace HexToolkit {
+    const char base16ToHex[16] = {
+            '0', '1', '2', '3',
+            '4', '5', '6', '7',
+            '8', '9', 'a', 'b',
+            'c', 'd', 'e', 'f'
+    };
+
+    int hexCharToBase16(char hexChar) {
+        if (hexChar >= '0' && hexChar <= '9') return hexChar - '0';
+        if (hexChar >= 'a' && hexChar <= 'f') return hexChar - 'a' + 10;
+        if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
+        throw std::invalid_argument("Invalid hexadecimal character");
+    }
+}
+
 void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     // Load server response.
     GlobalTimer::set("Retrieving the server response (r)");
@@ -3419,13 +3459,62 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     }
     M_result = s_prod;  // M.
     GlobalTimer::stop("Performing C <- Decode(Z) operation to get the encoded message");
-    // Check for correctness.
-    MatPoly corr = pt_real;
-    std::cout << "[" << UnixColours::MAGENTA << "Verify"
-              << UnixColours::RESET << "] Message is " << UnixColours::MAGENTA
-              << (is_eq(corr, M_result) ? "correct." : "incorrect.")
+
+    const size_t hashLength = 64;
+    const size_t coefficientRange = p_db;
+    const size_t hexCharacterCount = 16;
+    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
+    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
+    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
+    if (coefficientRange < hexCharacterCount) {
+        characterWriteSpace += 1;
+    }
+    if (characterWriteSpace == 0) {
+        characterWriteSpace = 1;
+    }
+
+    size_t plaintextEncodingLength = M_result.rows * M_result.cols * coeff_count;
+    size_t messageEncodedLength = characterWriteSpace * hashLength;
+    assert(messageEncodedLength < plaintextEncodingLength);
+    std::stringstream decodedMessageStream;
+    if (characterWriteSpace == 1) {
+        for (size_t i = 0; i < messageEncodedLength; i++) {
+            decodedMessageStream << HexToolkit::base16ToHex[M_result.data[i]];
+        }
+    } else {
+        for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
+            size_t base16Sum = 0;
+            for (size_t j = 0; j < characterWriteSpace; j++) {
+                base16Sum += M_result.data[i + j];
+            }
+            decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
+        }
+    }
+
+    bool showMessageDump = false;
+    if (showMessageDump) {
+        Log::cout << "Message dump: \n" << std::endl;
+        bool allZeros = true;
+        for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
+            if (M_result.data[i] != 0) {
+                allZeros = false;
+            }
+            std::cout << M_result.data[i] << ",";
+        }
+        std::cout << std::endl << std::endl;
+        Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
+    }
+    Log::cout << "Decoded hash: " << UnixColours::MAGENTA
+              << decodedMessageStream.str() << UnixColours::RESET
+              << std::endl;
+    // Validate hash.
+    const bool hashExistsInFile = Process::Data::getHashes().find(decodedMessageStream.str()) != Process::Data::getHashes().end();
+    std::cout << "[" << UnixColours::MAGENTA << "Check"
+              << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
+              << (hashExistsInFile ? "valid." : "invalid.")
               << UnixColours::RESET << std::endl;
     // If any, show differences between encoded message and actual.
+    MatPoly corr = pt_real;
     if (show_diff) {
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
             if (corr.data[i] != M_result.data[i]) {
@@ -3456,23 +3545,45 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
 }
 
 void refreshWorkspaceDirectory() {
-    if (!std::filesystem::is_empty(Process::workspacePath)) {
+    if (!std::filesystem::is_empty(Process::processPath)) {
         Log::cout << "Clearing process workspace." << std::endl;
-        std::string command = "rm -rf " + Process::workspacePath.string() + "/*";
+        std::string command = "rm -rf " + Process::processPath.string() + "/*";
         system(command.c_str());
     }
 }
 
+void clientExitStrategy(int signal) {
+    std::cout << "Received signal " << signal
+              << ". Exiting client process." << std::endl;
+    exit(signal);
+}
+
 void runSeparationTest() {
+    std::signal(SIGINT, clientExitStrategy);
+    std::signal(SIGTERM, clientExitStrategy);
     refreshWorkspaceDirectory();
     MatPoly S_Main, Sp_Main, sr_Query;
     GlobalTimer::set("Fig.2: Setup");
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
-    GlobalTimer::set("Fig.2: Query");
-    query_main(S_Main, Sp_Main, sr_Query);
-    GlobalTimer::stop("Fig.2: Query");
-    GlobalTimer::set("Fig.2: Extract");
-    extract_main(S_Main, Sp_Main);
-    GlobalTimer::stop("Fig.2: Extract");
+    Process::Data::load_hashes(Process::dataSpace("colorB_12.json"));
+    std::string query_command {};
+    do {
+        std::cout << "[" << UnixColours::CYAN << "Input"
+                  << UnixColours::RESET << "] "
+                  << "Enter query index: " << std::flush;
+        std::cin >> query_command;
+        system("clear");
+        Log::cout << "Retrieving hash for index " << UnixColours::MAGENTA
+                  << query_command << UnixColours::RESET
+                  << " from the database." << std::endl;
+        IDX_TARGET = strtol(query_command.c_str(), NULL, 10);
+        IDX_DIM0 = IDX_TARGET / (1 << further_dims);
+        GlobalTimer::set("Fig.2: Query");
+        query_main(S_Main, Sp_Main, sr_Query);
+        GlobalTimer::stop("Fig.2: Query");
+        GlobalTimer::set("Fig.2: Extract");
+        extract_main(S_Main, Sp_Main);
+        GlobalTimer::stop("Fig.2: Extract");
+    } while (true);
 }

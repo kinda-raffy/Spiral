@@ -52,6 +52,7 @@ if(USE_NATIVELOG)
 endif()
 
 find_package(HEXL CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 add_subdirectory(Seperated)
 add_subdirectory(Client)

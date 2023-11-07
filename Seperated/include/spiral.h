@@ -13,7 +13,11 @@
 #include <mutex>
 #include <assert.h>
 #include <algorithm>
+#include <filesystem>
 #include <unordered_set>
+#include <thread>
+#include "nlohmann/json.hpp"
+
 
 #ifndef __EMSCRIPTEN__
     // #include <omp.h>

@@ -18,6 +18,11 @@
 #include <unistd.h>
 #include <cerrno>
 
+#include <algorithm>
+#include <unordered_set>
+#include "nlohmann/json.hpp"
+#include <cstdlib>
+#include <csignal>
 
 #ifndef __EMSCRIPTEN__
     // #include <omp.h>

@@ -1108,7 +1108,7 @@ void generate_gadgets() {
     buildGadget(G_hat);
 }
 
-namespace DevelopmentData {
+namespace HexToolkit {
     const char base16ToHex[16] = {
         '0', '1', '2', '3',
         '4', '5', '6', '7',
@@ -1122,42 +1122,18 @@ namespace DevelopmentData {
         if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
         throw std::invalid_argument("Invalid hexadecimal character");
     }
-
-    const std::vector<std::string> hashes = {
-            "6ef02a389c6415e7dc6ac8cdf0fd65c83b678022e9c0bb37c6feedf318297c43"
-            // "848486bcaf9b3c5a7d86d7752be8dc059309384ab81580e382ce3d2f08164a9b",
-            // "78f646eca442535f7c82ed7928c3da0565d4f9878b460fb922c170f098078b08",
-            // "c22cae2c19ecf38b4827ac042206a857b60c72f2bd95aef9c77f2f4c52ebc859",
-            // "49be620f3c7bab7e08cd1174546b640eeb570dd7de5a176adb2917edad45d4fb"
-    };
-
-    // const std::unordered_set<std::string> hashes = {
-    //         "6ef02a389c6415e7dc6ac8cdf0fd65c83b678022e9c0bb37c6feedf318297c43"
-    // };
-
-    std::string randomHash() {
-        return hashes.at(rand() % hashes.size());
-    }
-    // std::string randomHash() {
-    //     return hashes.at(rand() % hashes.size());
-    // }
 }
 
-void generate_random_pt(MatPoly &M) {
+void generateRandomPt(MatPoly &M) {
     assert(!M.isNTT);
-    // Question: How does it create a random polynomial here?
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
-        // Note: p_db is the build variable PVALUE. For 20_32 it is 16.
         M.data[i] = rand() % (p_db);
     }
 }
 
-void generate_specific_pt(MatPoly &M) {
+void generateHashPt(MatPoly &M, const std::string& hash) {
     assert(!M.isNTT);
-    std::string hash = DevelopmentData::randomHash();
     size_t hashIterationPointer = 0;
-
-
     const size_t hashLength = 64;
     const size_t coefficientRange = p_db;
     const size_t hexCharacterCount = 16;
@@ -1170,15 +1146,15 @@ void generate_specific_pt(MatPoly &M) {
     if (characterWriteSpace == 0) {
         characterWriteSpace = 1;
     }
-
     const size_t coefficientSpace = M.rows * M.cols * poly_len;
     const size_t totalWriteSpace = hashLength * characterWriteSpace;
     assert(coefficientSpace > totalWriteSpace);
-    Log::cout << "Coefficient to Write Space ratio " << coefficientSpace << " : " << totalWriteSpace << std::endl;
+    // Log::cout << "Coefficient to Write Space ratio " << coefficientSpace << " : " << totalWriteSpace << std::endl;
+    std::cout << "\rEncoding " << hash << " into polynomial using " << characterWriteSpace << " space(s)." << std::flush;
     if (characterWriteSpace == 1) {
         for (size_t i = 0; i < coefficientSpace; i++) {
             if (hashIterationPointer < hash.size()) {
-                int hex = DevelopmentData::hexCharToBase16(hash.at(hashIterationPointer++));
+                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
                 assert(hex >= 0 && hex < 16);
                 M.data[i] = hex;
             } else {
@@ -1186,10 +1162,10 @@ void generate_specific_pt(MatPoly &M) {
             }
         }
     } else {
-        int bucketMaxValue = coefficientRange - 1;
+        int bucketMaxValue = static_cast<int>(coefficientRange) - 1;
         for (size_t i = 0; i < coefficientSpace; i += characterWriteSpace) {
             if (hashIterationPointer < hash.size()) {
-                int hex = DevelopmentData::hexCharToBase16(hash.at(hashIterationPointer++));
+                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
                 // Perform bucketing.
                 for (size_t j = 0; j < characterWriteSpace; j++) {
                     // Note: Redundant space is set to 0.
@@ -1198,7 +1174,9 @@ void generate_specific_pt(MatPoly &M) {
                     M.data[i + j] = bucketValue;
                     hex -= bucketValue;
                 }
-                if (hex != 0) throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
+                if (hex != 0) {
+                    throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
+                }
             } else {
                 for (size_t j = 0; j < characterWriteSpace; j++) {
                     if ((i + j) < coefficientSpace) {
@@ -1208,15 +1186,53 @@ void generate_specific_pt(MatPoly &M) {
             }
         }
     }
-    if (hashIterationPointer != hashLength) throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    if (hashIterationPointer != hashLength) {
+        throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    }
+}
+
+void generateDummyPt(MatPoly& M, const int dummyValue = 0) {
+    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
+        assert(dummyValue >= 0 and dummyValue < p_db);
+        M.data[i] = dummyValue;
+    }
+}
+
+namespace Process {
+    const std::filesystem::path processPath("../../Database_Data");
+
+    std::filesystem::path dataSpace(const std::string& filename) {
+        return processPath / std::filesystem::path(filename);
+    }
+
+    namespace Data {
+        // Note: const is only modified during load.
+        const std::unordered_set<std::string>& getHashes(const bool set = false) {
+            static std::unordered_set<std::string> hashes;
+            if (!set) assert(!hashes.empty());
+            return hashes;
+        }
+
+        void load_hashes(const std::filesystem::path& jsonFile) {
+            std::ifstream jsonFileStream(jsonFile);
+            nlohmann::json jsonData;
+            jsonFileStream >> jsonData;
+
+            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(getHashes(true));
+            for (auto& element : jsonData[0].items()) {
+                hashesRef.insert(element.value().get<string>());
+            }
+        }
+    }
 }
 
 void load_db() {
+    Log::cout << "Database assigned to color B." << std::endl;
+    Process::Data::load_hashes(Process::dataSpace("colorB_20.json"));
     // Note: This is hard-coded as 256.
     size_t dim0 = 1 << num_expansions;
     // Note: This resolves to 128.
     size_t num_per = total_n / dim0;
-    // Note: Ignored.
     if (random_data) throw std::runtime_error("Random data has been deleted.");
     // Note: Size of the database (B).
     size_t num_bytes_B = sizeof(uint64_t) * dim0 * num_per * n0 * n2 * poly_len;//2 * poly_len;
@@ -1241,14 +1257,21 @@ void load_db() {
     MatPoly pt_encd_raw(n0, n2, false);
     pts_encd = MatPoly(n0, n2);
     pt = MatPoly(n0, n0);
+    auto hashesToLoadIterator = Process::Data::getHashes().begin();
+    int count = 0;
+    int dummyCount = 0;
     // Note: For index i in the database.
     for (size_t i = 0; i < total_n; i++) {
-        // Question: How is this polynomial randomly generated?
-        if (i == IDX_TARGET) {
-            generate_specific_pt(pt_tmp);
+        if (hashesToLoadIterator != Process::Data::getHashes().end()) {
+            generateHashPt(pt_tmp, *hashesToLoadIterator);
+            hashesToLoadIterator++;
+            count++;
         } else {
-            generate_random_pt(pt_tmp);
+            generateDummyPt(pt_tmp);
+            dummyCount++;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // generateRandomPt(pt_tmp);
         pt_encd_raw = pt_tmp;
         // Note: For every randomly generated polynomial.
         for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
@@ -1298,8 +1321,21 @@ void load_db() {
             }
         }
     }
-
+    std::cout << std::endl;  // For carriage return.
     free(BB);
+
+    Log::cout << "Database N is " << total_n << "." << std::endl;
+    Log::cout << "Loaded " << count << "/" << Process::Data::getHashes().size()
+              << " hashes and " << dummyCount << " placeholder polynomials." << std::endl;
+
+    if (hashesToLoadIterator != Process::Data::getHashes().end()) {
+        // throw std::runtime_error(
+        //     "Failed to load all hashes into the database. "
+        //     "Is the database too small?"
+        // );
+        std::cerr << "Failed to load all hashes into the database. "
+                 << "Is the database too small?" << std::endl;
+    }
 
     if (has_file) {
         fs.close();
@@ -3529,13 +3565,6 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     }
     M_result = s_prod;  // M.
     GlobalTimer::stop("Perform C <- Decode(Z) operation to get the encoded message");
-    // Check for correctness.
-    MatPoly corr = pt_real;
-    std::cout << "[" << UnixColours::MAGENTA << "Check"
-              << UnixColours::RESET << "] Message is " << UnixColours::MAGENTA
-              << (is_eq(corr, M_result) ? "correct." : "incorrect.")
-              << UnixColours::RESET << std::endl;
-
 
     const size_t hashLength = 64;
     const size_t coefficientRange = p_db;
@@ -3556,7 +3585,7 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     std::stringstream decodedMessageStream;
     if (characterWriteSpace == 1) {
         for (size_t i = 0; i < messageEncodedLength; i++) {
-            decodedMessageStream << DevelopmentData::base16ToHex[M_result.data[i]];
+            decodedMessageStream << HexToolkit::base16ToHex[M_result.data[i]];
         }
     } else {
         for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
@@ -3564,26 +3593,39 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
             for (size_t j = 0; j < characterWriteSpace; j++) {
                 base16Sum += M_result.data[i + j];
             }
-            decodedMessageStream << DevelopmentData::base16ToHex[base16Sum];
+            decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
         }
     }
 
-    Log::cout << "Decoded message: " << decodedMessageStream.str() << std::endl;
-
-    bool showMessages = true;
+    bool showMessages = false;
     if (showMessages) {
-        Log::cout << "Decoded message: ";
+        Log::cout << "Message dump: \n" << std::endl;
+        bool allZeros = true;
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
-            Log::cout << M_result.data[i] << ",";
+            if (M_result.data[i] != 0) {
+                allZeros = false;
+            }
+            std::cout << M_result.data[i] << ",";
         }
-        Log::cout << std::endl;
+        std::cout << std::endl << std::endl;
+        Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
         // Log::cout << "Actual message: ";
         // for (size_t i = 0; i < corr.rows * corr.cols * coeff_count; i++) {
         //     Log::cout << corr.data[i] << ",";
         // }
         // Log::cout << std::endl;
     }
+    Log::cout << "Decoded hash: " << UnixColours::MAGENTA
+              << decodedMessageStream.str() << UnixColours::RESET
+              << std::endl;
+    // Validate hash.
+    const bool hashExistsInFile = Process::Data::getHashes().find(decodedMessageStream.str()) != Process::Data::getHashes().end();
+    std::cout << "[" << UnixColours::MAGENTA << "Check"
+              << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
+              << (hashExistsInFile ? "valid." : "invalid.")
+              << UnixColours::RESET << std::endl;
     // If any, show differences between encoded message and actual.
+    MatPoly corr = pt_real;
     if (show_diff) {
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
             if (corr.data[i] != M_result.data[i]) {
@@ -3621,7 +3663,8 @@ void runSeperationTest() {
     GlobalTimer::stop("Fig.2: Setup");
     std::string query_command {"halt"};
     do {
-        std::cout << "Enter query index: " << std::flush;
+        std::cout << "[" << UnixColours::CYAN << "Input"
+                  << UnixColours::RESET << "] " << "Enter query index: " << std::flush;
         std::cin >> query_command;
         IDX_TARGET = strtol(query_command.c_str(), NULL, 10);
         IDX_DIM0 = IDX_TARGET / (1 << further_dims);

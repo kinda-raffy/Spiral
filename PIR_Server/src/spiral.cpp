@@ -110,15 +110,6 @@ namespace Log {
 }
 #endif
 
-
-void generate_random_pt(MatPoly &M) {
-    assert(!M.isNTT);
-
-    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
-        M.data[i] = rand() % (p_db);
-    }
-}
-
 void get_gadget_1(MatPoly &G) { // n0 x m1
     // identity
     for (size_t j = 0; j < m1; j++) {
@@ -1128,10 +1119,173 @@ void generate_gadgets() {
     buildGadget(G_hat);
 }
 
+#ifdef TIMERLOG
+namespace GlobalTimer {
+    inline std::map<std::string, std::chrono::time_point<std::chrono::high_resolution_clock>> activeTimers {};
+
+    void set(const std::string& timerName) {
+        assert(!activeTimers.count(timerName));
+        activeTimers[timerName] = std::chrono::high_resolution_clock::now();
+        std::cout << "[" << UnixColours::YELLOW << "Begin"
+                  << UnixColours::RESET << "] "
+                  << UnixColours::GREEN << timerName
+                  << "." << UnixColours::RESET << std::endl;
+    }
+
+    void stop(const std::string& timerName) {
+        assert(activeTimers.count(timerName));
+        auto start = activeTimers[timerName];
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        std::cout << "[" << UnixColours::BLUE << duration
+                  << "µs" << UnixColours::RESET << "] "
+                  << UnixColours::RED << timerName << "."
+                  << UnixColours::RESET << std::endl;
+        activeTimers.erase(timerName);
+    }
+
+};
+#else
+namespace GlobalTimer {
+    void set(const std::string& timerName) {}
+    void stop(const std::string& timerName) {}
+};
+#endif
+
+
+namespace Process {
+    const std::filesystem::path processPath("/home/ubuntu/Process_Workspace/");
+    std::filesystem::path workspace(const std::string& filename) {
+        return processPath / std::filesystem::path(filename);
+    }
+
+    const std::filesystem::path dataPath("../../Database_Data");
+    std::filesystem::path dataSpace(const std::string& filename) {
+        return dataPath / std::filesystem::path(filename);
+    }
+
+    namespace Data {
+        // Note: const is only modified during load.
+        const std::unordered_set<std::string>& getHashes(const bool set = false) {
+            static std::unordered_set<std::string> hashes;
+            if (!set) assert(!hashes.empty());
+            return hashes;
+        }
+
+        void load_hashes(const std::filesystem::path& jsonFile) {
+            std::ifstream jsonFileStream(jsonFile);
+            nlohmann::json jsonData;
+            jsonFileStream >> jsonData;
+
+            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(getHashes(true));
+            for (auto& element : jsonData[0].items()) {
+                hashesRef.insert(element.value().get<string>());
+            }
+        }
+    }
+}
+
+namespace HexToolkit {
+    const char base16ToHex[16] = {
+            '0', '1', '2', '3',
+            '4', '5', '6', '7',
+            '8', '9', 'a', 'b',
+            'c', 'd', 'e', 'f'
+    };
+
+    int hexCharToBase16(char hexChar) {
+        if (hexChar >= '0' && hexChar <= '9') return hexChar - '0';
+        if (hexChar >= 'a' && hexChar <= 'f') return hexChar - 'a' + 10;
+        if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
+        throw std::invalid_argument("Invalid hexadecimal character");
+    }
+}
+
+void generateRandomPt(MatPoly &M) {
+    assert(!M.isNTT);
+
+    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
+        M.data[i] = rand() % (p_db);
+    }
+}
+
+void generateHashPt(MatPoly &M, const std::string& hash, const int iterationCount) {
+    assert(!M.isNTT);
+    size_t hashIterationPointer = 0;
+    const size_t hashLength = 64;
+    const size_t coefficientRange = p_db;
+    const size_t hexCharacterCount = 16;
+    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
+    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
+    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
+    if (coefficientRange < hexCharacterCount) {
+        characterWriteSpace += 1;
+    }
+    if (characterWriteSpace == 0) {
+        characterWriteSpace = 1;
+    }
+    const size_t coefficientSpace = M.rows * M.cols * poly_len;
+    const size_t totalWriteSpace = hashLength * characterWriteSpace;
+    assert(coefficientSpace > totalWriteSpace);
+    // Log::cout << "Coefficient to Write Space ratio " << coefficientSpace << " : " << totalWriteSpace << std::endl;
+    std::cout << "\r [" << iterationCount << "] Encoding "
+              << hash << " into polynomials under " << characterWriteSpace
+              << " coefficients/character." << std::flush;
+    if (characterWriteSpace == 1) {
+        for (size_t i = 0; i < coefficientSpace; i++) {
+            if (hashIterationPointer < hash.size()) {
+                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
+                assert(hex >= 0 && hex < 16);
+                M.data[i] = hex;
+            } else {
+                M.data[i] = 0;
+            }
+        }
+    } else {
+        int bucketMaxValue = static_cast<int>(coefficientRange) - 1;
+        for (size_t i = 0; i < coefficientSpace; i += characterWriteSpace) {
+            if (hashIterationPointer < hash.size()) {
+                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
+                // Perform bucketing.
+                for (size_t j = 0; j < characterWriteSpace; j++) {
+                    // Note: Redundant space is set to 0.
+                    int bucketValue = std::min(bucketMaxValue, hex);
+                    assert(bucketValue >= 0 or bucketValue < p_db);
+                    M.data[i + j] = bucketValue;
+                    hex -= bucketValue;
+                }
+                if (hex != 0) {
+                    throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
+                }
+            } else {
+                for (size_t j = 0; j < characterWriteSpace; j++) {
+                    if ((i + j) < coefficientSpace) {
+                        M.data[i + j] = 0;
+                    }
+                }
+            }
+        }
+    }
+    if (hashIterationPointer != hashLength) {
+        throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    }
+}
+
+void generateDummyPt(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
+    std::cout << "\r [" << iterationCount
+              << "] Encoding dummy value into remaining polynomials."
+              << std::string(75, ' ') << std::flush;
+    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
+        assert(dummyValue >= 0 and dummyValue < p_db);
+        M.data[i] = dummyValue;
+    }
+}
+
 void load_db() {
+    Log::cout << "Database assigned to color B." << std::endl;
+    Process::Data::load_hashes(Process::dataSpace("colorB_12.json"));
     size_t dim0 = 1 << num_expansions;
     size_t num_per = total_n / dim0;
-
     if (random_data) {
         size_t num_words = dummyWorkingSet * dim0 * num_per * n0 * n2;
         B = (uint64_t *)aligned_alloc(64, sizeof(uint64_t) * num_words);
@@ -1182,7 +1336,6 @@ void load_db() {
         pt_correct = MatPoly(n0, n0);
         return;
     }
-
     size_t num_bytes_B = sizeof(uint64_t) * dim0 * num_per * n0 * n2 * poly_len;//2 * poly_len;
     NativeLog::cout << "num_bytes_B: " << num_bytes_B << endl;
     B = (uint64_t *)aligned_alloc(64, num_bytes_B);
@@ -1195,77 +1348,81 @@ void load_db() {
     uint64_t *pt_buf = (uint64_t *)malloc(n0 * n0 * crt_count * poly_len * sizeof(uint64_t));
     memset(pt_buf, 0, n0 * n0 * crt_count * poly_len * sizeof(uint64_t));
 
-    if (has_file && load) {
-        // TODO
-    } else {
-        NativeLog::cout << "starting generation of db" << endl;
-        MatPoly H_nttd = to_ntt(H_mp);
-        uint64_t *H_encd = H_nttd.data;
-        MatPoly pt_tmp(n0, n0, false);
-        MatPoly pt_encd_raw(n0, n2, false);
-        pts_encd = MatPoly(n0, n2);
-        pt = MatPoly(n0, n0);
-        for (size_t i = 0; i < total_n; i++) {
-            if (has_data) {
-                // TODO
-            } else {
-                if (has_data) {
-                    // TODO
-                } else {
-                    generate_random_pt(pt_tmp);
-                }
-
-                pt_encd_raw = pt_tmp;
-                for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
-                    int64_t val = (int64_t) pt_encd_raw.data[pol];
-                    assert(val >= 0 && val < p_db);
-                    if (val >= (p_db / 2)) {
-                        val = val - (int64_t)p_db;
-                    }
-                    if (val < 0) {
-                        val += Q_i;
-                    }
-                    assert(val >= 0 && val < Q_i);
-                    pt_encd_raw.data[pol] = val;
-                }
-                to_ntt(pts_encd, pt_encd_raw);
-
-                if (i == IDX_TARGET) {
-                    cop(pt_encd_correct, pts_encd);
-                    cop(pt_real, pt_tmp);
-                    to_ntt(pt, pt_tmp);
-                    cop(pt_correct, pt);
-                }
+    NativeLog::cout << "starting generation of db" << endl;
+    MatPoly H_nttd = to_ntt(H_mp);
+    uint64_t *H_encd = H_nttd.data;
+    MatPoly pt_tmp(n0, n0, false);
+    MatPoly pt_encd_raw(n0, n2, false);
+    pts_encd = MatPoly(n0, n2);
+    pt = MatPoly(n0, n0);
+    auto hashesToLoadIterator = Process::Data::getHashes().begin();
+    int hashLoadCount = 0;
+    int dummyCount = 0;
+    for (size_t i = 0; i < total_n; i++) {
+        if (hashesToLoadIterator != Process::Data::getHashes().end()) {
+            generateHashPt(pt_tmp, *hashesToLoadIterator, hashLoadCount);
+            hashesToLoadIterator++;
+            hashLoadCount++;
+        } else {
+            generateDummyPt(pt_tmp, dummyCount);
+            dummyCount++;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        pt_encd_raw = pt_tmp;
+        for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
+            int64_t val = (int64_t) pt_encd_raw.data[pol];
+            assert(val >= 0 && val < p_db);
+            if (val >= (p_db / 2)) {
+                val = val - (int64_t)p_db;
             }
-
-            // b': i c n z j m
-            size_t ii = i % num_per;
-            size_t j = i / num_per;
-            for (size_t m = 0; m < n0; m++) {
-                for (size_t c = 0; c < n2; c++) {
-                    if (has_data) {
-                        // TODO
-                    } else {
-                        memcpy(BB, &pts_encd.data[(m * n2 + c) * crt_count * coeff_count], crt_count * coeff_count * sizeof(uint64_t));
-                        for (size_t z = 0; z < poly_len; z++) {
-                            size_t idx = z * (num_per * n2 * dim0 * n0) +
-                                         ii * (n2 * dim0 * n0) +
-                                         c * (dim0 * n0) +
-                                         j * (n0) + m;
-
-                            B[idx] = BB[z] | (BB[poly_len + z] << 32);
-                        }
-                    }
-                }
+            if (val < 0) {
+                val += Q_i;
             }
+            assert(val >= 0 && val < Q_i);
+            pt_encd_raw.data[pol] = val;
+        }
+        to_ntt(pts_encd, pt_encd_raw);
+
+        if (i == IDX_TARGET) {
+            cop(pt_encd_correct, pts_encd);
+            cop(pt_real, pt_tmp);
+            to_ntt(pt, pt_tmp);
+            cop(pt_correct, pt);
         }
 
-        if (has_file && !load) {
-            // TODO
+        // b': i c n z j m
+        size_t ii = i % num_per;
+        size_t j = i / num_per;
+        for (size_t m = 0; m < n0; m++) {
+            for (size_t c = 0; c < n2; c++) {
+                memcpy(BB, &pts_encd.data[(m * n2 + c) * crt_count * coeff_count], crt_count * coeff_count * sizeof(uint64_t));
+                for (size_t z = 0; z < poly_len; z++) {
+                    size_t idx = z * (num_per * n2 * dim0 * n0) +
+                                 ii * (n2 * dim0 * n0) +
+                                 c * (dim0 * n0) +
+                                 j * (n0) + m;
+
+                    B[idx] = BB[z] | (BB[poly_len + z] << 32);
+                }
+            }
         }
     }
-
     free(BB);
+    std::cout << "\r Database load complete." << std::string(94, ' ') << std::flush;
+    std::cout << std::endl;  // For carriage return.
+
+    Log::cout << "Database N is " << total_n << "." << std::endl;
+    Log::cout << "Loaded " << hashLoadCount << "/" << Process::Data::getHashes().size()
+              << " hashes and " << dummyCount << " placeholder polynomials." << std::endl;
+
+    if (hashesToLoadIterator != Process::Data::getHashes().end()) {
+        // throw std::runtime_error(
+        //     "Failed to load all hashes into the database. "
+        //     "Is the database too small?"
+        // );
+        std::cerr << "Failed to load all hashes into the database. "
+                  << "Is the database too small?" << std::endl;
+    }
 
     if (has_file) {
         fs.close();
@@ -1328,50 +1485,6 @@ void do_MatPol_test() {
 }
 
 void testScalToMatAndConversion();
-
-
-#ifdef TIMERLOG
-namespace GlobalTimer {
-    inline std::map<std::string, std::chrono::time_point<std::chrono::high_resolution_clock>> activeTimers {};
-
-    void set(const std::string& timerName) {
-        assert(!activeTimers.count(timerName));
-        activeTimers[timerName] = std::chrono::high_resolution_clock::now();
-        std::cout << "[" << UnixColours::YELLOW << "Begin"
-                  << UnixColours::RESET << "] "
-                  << UnixColours::GREEN << timerName
-                  << "." << UnixColours::RESET << std::endl;
-    }
-
-    void stop(const std::string& timerName) {
-        assert(activeTimers.count(timerName));
-        auto start = activeTimers[timerName];
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-        std::cout << "[" << UnixColours::BLUE << duration
-                  << "µs" << UnixColours::RESET << "] "
-                  << UnixColours::RED << timerName << "."
-                  << UnixColours::RESET << std::endl;
-        activeTimers.erase(timerName);
-    }
-
-};
-#else
-namespace GlobalTimer {
-    void set(const std::string& timerName) {}
-    void stop(const std::string& timerName) {}
-};
-#endif
-
-
-namespace Process {
-    const std::filesystem::path workspacePath("/home/ubuntu/Process_Workspace/");
-
-    std::filesystem::path workspace(const std::string& filename) {
-        return workspacePath / std::filesystem::path(filename);
-    }
-}
-
 
 int main(int argc, char *argv[]) {
     #ifndef __EMSCRIPTEN__
@@ -3015,73 +3128,6 @@ void sendToPipe(const FurtherDimsLocals& obj, const std::filesystem::path& fileP
     close(pipeFileDescriptor);
 }
 
-void readFromFileStream(
-        std::ifstream& inFile,
-        std::initializer_list<std::reference_wrapper<MatPoly>> mats
-    ) {
-    auto readMatPoly = [&inFile](MatPoly &mat) {
-        inFile.read(reinterpret_cast<char*>(&mat.rows), sizeof(mat.rows));
-        inFile.read(reinterpret_cast<char*>(&mat.cols), sizeof(mat.cols));
-        inFile.read(reinterpret_cast<char*>(&mat.isNTT), sizeof(mat.isNTT));
-
-        size_t dataSize = mat.rows * mat.cols * (mat.isNTT ? crt_count : 1) * coeff_count;
-        if (mat.data != nullptr) {
-            free(mat.data);
-        }
-        mat.data = (uint64_t*) calloc(dataSize, sizeof(uint64_t));
-        inFile.read(reinterpret_cast<char*>(mat.data), dataSize * sizeof(uint64_t));
-    };
-    for (auto&& matRef : mats) {
-        readMatPoly(matRef.get());
-    }
-}
-
-void loadFromFile(std::vector<MatPoly>& keyArray, const std::string& fileName) {
-    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
-    if (!inFile.is_open()) {
-        std::cerr << "Failed to open the file: " << fileName << std::endl;
-        return;
-    }
-    while (inFile.good()) {
-        MatPoly key;
-        readFromFileStream(inFile, {key});
-        if (inFile.eof()) break;
-        keyArray.push_back(key);
-    }
-    inFile.close();
-}
-
-void loadFromFile(
-        std::initializer_list<std::reference_wrapper<MatPoly>> matsToLoadInto,
-        const std::string& fileName
-    ) {
-    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
-    if (!inFile.is_open()) {
-        std::cerr << "Failed to open the file: " << fileName << std::endl;
-        return;
-    }
-    readFromFileStream(inFile, matsToLoadInto);
-    inFile.close();
-}
-
-void loadFromFile(FurtherDimsLocals& obj, const std::string &fileName) {
-    std::ifstream inFile(fileName, std::ios::in | std::ios::binary);
-    if (!inFile.is_open()) {
-        std::cerr << "Failed to open the file: " << fileName << std::endl;
-        return;
-    }
-    inFile.read(reinterpret_cast<char*>(&obj.num_per), sizeof(obj.num_per));
-    inFile.read(reinterpret_cast<char*>(&obj.num_bytes_C), sizeof(obj.num_bytes_C));
-    obj.allocate();
-    inFile.read(reinterpret_cast<char*>(obj.result), 2 * obj.num_bytes_C);
-    inFile.read(reinterpret_cast<char*>(obj.cts), 2 * obj.num_bytes_C);
-    inFile.read(reinterpret_cast<char*>(obj.scratch_cts1), obj.num_bytes_C);
-    inFile.read(reinterpret_cast<char*>(obj.scratch_cts2), obj.num_bytes_C);
-    inFile.read(reinterpret_cast<char*>(obj.scratch_cts_double1), (m2 / n1) * obj.num_bytes_C);
-    inFile.read(reinterpret_cast<char*>(obj.scratch_cts_double2), (m2 / n1) * obj.num_bytes_C);
-    inFile.close();
-}
-
 ssize_t readAllBytes(int fd, void* buffer, size_t n) {
     size_t totalBytes = 0;
     char* buf = static_cast<char*>(buffer);
@@ -3142,7 +3188,7 @@ void loadFromPipe(
 ) {
     int pipeFileDescriptor {};
     mkfifo(filePath.c_str(), 0666);
-    Log::cout << "Connecting to client on " << UnixColours::MAGENTA
+    Log::cout << "Server ready on " << UnixColours::MAGENTA
               << filePath.filename() << UnixColours::RESET << " pipe." << std::endl;
     pipeFileDescriptor = open(filePath.c_str(), O_RDONLY);
     if (pipeFileDescriptor < 0) {
@@ -3161,10 +3207,14 @@ void loadFromPipe(
     close(pipeFileDescriptor);
 }
 
-void loadFromPipe(std::vector<MatPoly>& keyArray, const std::filesystem::path& filePath) {
+void loadFromPipe(
+    std::vector<MatPoly>& keyArray,
+    const std::filesystem::path& filePath,
+    const bool clearTerminal = false
+) {
     int pipeFileDescriptor {};
     mkfifo(filePath.c_str(), 0666);
-    Log::cout << "Connecting to client on " << UnixColours::MAGENTA
+    Log::cout << "Server ready on " << UnixColours::MAGENTA
               << filePath.filename() << UnixColours::RESET << " pipe." << std::endl;
     pipeFileDescriptor = open(filePath.c_str(), O_RDONLY);
     if (pipeFileDescriptor < 0) {
@@ -3181,6 +3231,7 @@ void loadFromPipe(std::vector<MatPoly>& keyArray, const std::filesystem::path& f
         }
         keyArray.push_back(key);
     } while (true);
+    if (clearTerminal) system("clear");
     Log::cout << "Received " << ok_retrievals << " Matrices through the "
               << UnixColours::MAGENTA << filePath.filename() << UnixColours::RESET
               << " pipe." << std::endl;
@@ -3253,7 +3304,7 @@ void answer_main(
      * @note Load the encrypted query form the client into an std::vector of
      *       MatPoly objects.
      */
-    loadFromPipe(round_cv_v_Answer, Process::workspace("query"));
+    loadFromPipe(round_cv_v_Answer, Process::workspace("query"), true);
     GlobalTimer::stop("Loading the query (q)");
     // Determine stop round.
     size_t qe_rest = query_elems_rest;
@@ -3407,7 +3458,16 @@ void answer_main(
     sendToPipe(furtherDimsLocals, Process::workspace("response"));
 }
 
+void serverExitStrategy(int signal) {
+    std::cout << "Received signal " << signal
+              << ". Exiting server process." << std::endl;
+    free(B);
+    exit(signal);
+}
+
 void runSeparationTest() {
+    std::signal(SIGINT, serverExitStrategy);
+    std::signal(SIGTERM, serverExitStrategy);
     GlobalTimer::set("Load public parameters and conversion keys");
     std::vector<MatPoly> W_Exp_V, W_Exp_Right_V;
     /** Attach networking here.
@@ -3428,7 +3488,9 @@ void runSeparationTest() {
      */
     loadFromPipe({W, V}, Process::workspace("conversion_keys"));
     GlobalTimer::stop("Load public parameters and conversion keys");
-    GlobalTimer::set("Fig.2: Answer");
-    answer_main(W_Exp_Right_V, W_Exp_V, W, V);
-    GlobalTimer::stop("Fig.2: Answer");
+    do {
+        GlobalTimer::set("Fig.2: Answer");
+        answer_main(W_Exp_Right_V, W_Exp_V, W, V);
+        GlobalTimer::stop("Fig.2: Answer");
+    } while (true);
 }

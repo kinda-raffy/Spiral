@@ -1166,18 +1166,18 @@ namespace Process {
 
     namespace Data {
         // Note: const is only modified during load.
-        const std::unordered_set<std::string>& getHashes(const bool set = false) {
+        const std::unordered_set<std::string>& hashStore(const bool set = false) {
             static std::unordered_set<std::string> hashes;
             if (!set) assert(!hashes.empty());
             return hashes;
         }
 
-        void load_hashes(const std::filesystem::path& jsonFile) {
+        void loadHashes(const std::filesystem::path& jsonFile) {
             std::ifstream jsonFileStream(jsonFile);
             nlohmann::json jsonData;
             jsonFileStream >> jsonData;
 
-            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(getHashes(true));
+            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(hashStore(true));
             for (auto& element : jsonData[0].items()) {
                 hashesRef.insert(element.value().get<string>());
             }
@@ -1271,7 +1271,7 @@ void generateHashPt(MatPoly &M, const std::string& hash, const int iterationCoun
     }
 }
 
-void generateDummyPt(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
+void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
     std::cout << "\r [" << iterationCount
               << "] Encoding dummy value into remaining polynomials."
               << std::string(75, ' ') << std::flush;
@@ -1283,7 +1283,7 @@ void generateDummyPt(MatPoly& M, const int iterationCount, const int dummyValue 
 
 void load_db() {
     Log::cout << "Database assigned to color B." << std::endl;
-    Process::Data::load_hashes(Process::dataSpace("colorB_12.json"));
+    Process::Data::loadHashes(Process::dataSpace("colorB_12.json"));
     size_t dim0 = 1 << num_expansions;
     size_t num_per = total_n / dim0;
     if (random_data) {
@@ -1355,16 +1355,16 @@ void load_db() {
     MatPoly pt_encd_raw(n0, n2, false);
     pts_encd = MatPoly(n0, n2);
     pt = MatPoly(n0, n0);
-    auto hashesToLoadIterator = Process::Data::getHashes().begin();
+    auto hashesToLoadIterator = Process::Data::hashStore().begin();
     int hashLoadCount = 0;
     int dummyCount = 0;
     for (size_t i = 0; i < total_n; i++) {
-        if (hashesToLoadIterator != Process::Data::getHashes().end()) {
+        if (hashesToLoadIterator != Process::Data::hashStore().end()) {
             generateHashPt(pt_tmp, *hashesToLoadIterator, hashLoadCount);
             hashesToLoadIterator++;
             hashLoadCount++;
         } else {
-            generateDummyPt(pt_tmp, dummyCount);
+            generatePaddedPoly(pt_tmp, dummyCount);
             dummyCount++;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -1412,10 +1412,10 @@ void load_db() {
     std::cout << std::endl;  // For carriage return.
 
     Log::cout << "Database N is " << total_n << "." << std::endl;
-    Log::cout << "Loaded " << hashLoadCount << "/" << Process::Data::getHashes().size()
+    Log::cout << "Loaded " << hashLoadCount << "/" << Process::Data::hashStore().size()
               << " hashes and " << dummyCount << " placeholder polynomials." << std::endl;
 
-    if (hashesToLoadIterator != Process::Data::getHashes().end()) {
+    if (hashesToLoadIterator != Process::Data::hashStore().end()) {
         // throw std::runtime_error(
         //     "Failed to load all hashes into the database. "
         //     "Is the database too small?"
@@ -3458,7 +3458,7 @@ void answer_main(
     sendToPipe(furtherDimsLocals, Process::workspace("response"));
 }
 
-void serverExitStrategy(int signal) {
+void processExitStrategy(int signal) {
     std::cout << "Received signal " << signal
               << ". Exiting server process." << std::endl;
     free(B);
@@ -3466,8 +3466,8 @@ void serverExitStrategy(int signal) {
 }
 
 void runSeparationTest() {
-    std::signal(SIGINT, serverExitStrategy);
-    std::signal(SIGTERM, serverExitStrategy);
+    std::signal(SIGINT, processExitStrategy);
+    std::signal(SIGTERM, processExitStrategy);
     GlobalTimer::set("Load public parameters and conversion keys");
     std::vector<MatPoly> W_Exp_V, W_Exp_Right_V;
     /** Attach networking here.

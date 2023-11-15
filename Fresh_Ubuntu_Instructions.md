@@ -61,7 +61,7 @@ git clone https://github.com/Microsoft/vcpkg.git vcpkg
 Finally, install the required packages:
 
 ```bash
-./vcpkg/vcpkg install hexl nlohmann-json
+./vcpkg/vcpkg install hexl nlohmann-json boost-multi-index
 pip install tabulate
 ```
 

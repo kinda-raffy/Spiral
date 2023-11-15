@@ -1108,6 +1108,60 @@ void generate_gadgets() {
     buildGadget(G_hat);
 }
 
+enum Container{
+    Hash,
+    Sequence
+};
+
+namespace Process {
+    const std::filesystem::path processPath("../../Database_Data");
+
+    std::filesystem::path dataSpace(const std::string& filename) {
+        return processPath / std::filesystem::path(filename);
+    }
+
+    namespace Data {
+        typedef boost::multi_index::multi_index_container<
+            std::string,
+            boost::multi_index::indexed_by<
+                boost::multi_index::hashed_unique<
+                    boost::multi_index::identity<std::string>
+                >,
+                boost::multi_index::sequenced<>
+            >
+        > HashStore;
+
+        // Note: const is only modified during load.
+        const HashStore& hashStore(const bool set = false) {
+            static HashStore hashes;
+            if (!set) assert(!hashes.get<Container::Hash>().empty());
+            return hashes;
+        }
+
+        void loadHashes(const std::filesystem::path& jsonFile) {
+            std::ifstream jsonFileStream(jsonFile);
+            nlohmann::ordered_json jsonData;
+            jsonFileStream >> jsonData;
+
+            auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
+            for (auto& element : jsonData[0].items()) {
+                hashStoreRef.get<Container::Sequence>().push_back(element.value().get<string>());
+            }
+        }
+
+        std::string retrieveHashAtIndex(const size_t index) {
+            const auto& hashStoreSequence = hashStore().get<Container::Sequence>();
+            if (index < hashStoreSequence.size()) {
+                auto iterator = hashStoreSequence.begin();
+                std::advance(iterator, index);
+                return *iterator;
+            } else {
+                throw std::out_of_range("Hash index out of range from hash store.");
+            }
+        }
+    }
+}
+
 namespace HexToolkit {
     const char base16ToHex[16] = {
         '0', '1', '2', '3',
@@ -1131,96 +1185,208 @@ void generateRandomPt(MatPoly &M) {
     }
 }
 
-void generateHashPt(MatPoly &M, const std::string& hash) {
-    assert(!M.isNTT);
-    size_t hashIterationPointer = 0;
-    const size_t hashLength = 64;
-    const size_t coefficientRange = p_db;
-    const size_t hexCharacterCount = 16;
-    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
-    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
-    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
-    if (coefficientRange < hexCharacterCount) {
-        characterWriteSpace += 1;
-    }
-    if (characterWriteSpace == 0) {
-        characterWriteSpace = 1;
-    }
-    const size_t coefficientSpace = M.rows * M.cols * poly_len;
-    const size_t totalWriteSpace = hashLength * characterWriteSpace;
-    assert(coefficientSpace > totalWriteSpace);
-    // Log::cout << "Coefficient to Write Space ratio " << coefficientSpace << " : " << totalWriteSpace << std::endl;
-    std::cout << "\rEncoding " << hash << " into polynomial using " << characterWriteSpace << " space(s)." << std::flush;
-    if (characterWriteSpace == 1) {
-        for (size_t i = 0; i < coefficientSpace; i++) {
-            if (hashIterationPointer < hash.size()) {
-                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
-                assert(hex >= 0 && hex < 16);
-                M.data[i] = hex;
-            } else {
-                M.data[i] = 0;
-            }
-        }
-    } else {
-        int bucketMaxValue = static_cast<int>(coefficientRange) - 1;
-        for (size_t i = 0; i < coefficientSpace; i += characterWriteSpace) {
-            if (hashIterationPointer < hash.size()) {
-                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
-                // Perform bucketing.
-                for (size_t j = 0; j < characterWriteSpace; j++) {
-                    // Note: Redundant space is set to 0.
-                    int bucketValue = std::min(bucketMaxValue, hex);
-                    assert(bucketValue >= 0 or bucketValue < p_db);
-                    M.data[i + j] = bucketValue;
-                    hex -= bucketValue;
-                }
-                if (hex != 0) {
-                    throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
-                }
-            } else {
-                for (size_t j = 0; j < characterWriteSpace; j++) {
-                    if ((i + j) < coefficientSpace) {
-                        M.data[i + j] = 0;
-                    }
-                }
-            }
-        }
-    }
-    if (hashIterationPointer != hashLength) {
-        throw std::runtime_error("Failed to encode entire hash into polynomial.");
-    }
-}
-
-void generateDummyPt(MatPoly& M, const int dummyValue = 0) {
+void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
+    std::cout << "\r [" << iterationCount
+              << "] Encoding dummy value into remaining polynomials."
+              << std::string(80, ' ') << std::flush;
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
         assert(dummyValue >= 0 and dummyValue < p_db);
         M.data[i] = dummyValue;
     }
 }
 
-namespace Process {
-    const std::filesystem::path processPath("../../Database_Data");
+void generateHashPt(MatPoly &M, const std::string& hash, const int iterationCount) {
+    assert(!M.isNTT);
+    assert(hash.size() == 64);
+    const size_t hashLength = hash.size();
+    const size_t plaintextModulus = p_db;
+    const size_t hexadecimalRange = 16;
+    const bool isHexadecimalWritable = plaintextModulus % hexadecimalRange == 0 or
+                                       hexadecimalRange % plaintextModulus == 0;
+    assert(isHexadecimalWritable);
 
-    std::filesystem::path dataSpace(const std::string& filename) {
-        return processPath / std::filesystem::path(filename);
+    auto isSupportedPlaintextModulus = [](const size_t plaintextModulus) {
+        const std::unordered_set<size_t> supportedPlaintextModuli{4, 16, 256};
+        return supportedPlaintextModuli.find(plaintextModulus) != supportedPlaintextModuli.end();
+    };
+    assert(isSupportedPlaintextModulus(plaintextModulus));
+
+    size_t coefficientsPerCharacter = hexadecimalRange / plaintextModulus;
+    // TODO: Clarify here.
+    if (plaintextModulus < hexadecimalRange) {
+        coefficientsPerCharacter += 1;
+    }
+    if (coefficientsPerCharacter == 0) {
+        coefficientsPerCharacter = 1;
     }
 
-    namespace Data {
-        // Note: const is only modified during load.
-        const std::unordered_set<std::string>& getHashes(const bool set = false) {
-            static std::unordered_set<std::string> hashes;
-            if (!set) assert(!hashes.empty());
-            return hashes;
+    const size_t totalCoefficients = M.rows * M.cols * poly_len;
+    const size_t coefficientsPerHash = hashLength * coefficientsPerCharacter;
+    assert(totalCoefficients > coefficientsPerHash);
+    std::cout << "[" << iterationCount << "] Encoding "
+              << hash << " into polynomials under " << coefficientsPerCharacter
+              << " coefficients/character." << std::endl;
+    // std::cout << "\r [" << iterationCount << "] Encoding "
+    //           << hash << " into polynomials under " << coefficientsPerCharacter
+    //           << " coefficients/character." << std::flush;
+    size_t hashIterationPointer = 0;
+    if (coefficientsPerCharacter == 1) {
+        for (size_t index = 0; index < totalCoefficients; index++) {
+            const bool isHashExhausted = hashIterationPointer >= hashLength;
+            if (!isHashExhausted) {
+                int hexToWrite = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
+                assert(hexToWrite >= 0 && hexToWrite < 16);
+                M.data[index] = hexToWrite;
+            } else {
+                const int dummyValue = 0;
+                M.data[index] = dummyValue;
+            }
         }
+    } else {
+        int bucketMaxValue = static_cast<int>(plaintextModulus) - 1;
+        for (size_t characterIndex = 0;
+             characterIndex < totalCoefficients;
+             characterIndex += coefficientsPerCharacter) {
+            const bool isHashExhausted = hashIterationPointer >= hashLength;
+            if (!isHashExhausted) {
+                int hexToBucket = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
+                // Perform bucketing.
+                for (size_t bucketIndex = 0; bucketIndex < coefficientsPerCharacter; bucketIndex++) {
+                    // Note: When character is exhausted, bucketMaxValue should default
+                    //       to the dummy value 0.
+                    int bucketValue = std::min(bucketMaxValue, hexToBucket);
+                    assert(bucketValue >= 0 or bucketValue < p_db);
+                    M.data[characterIndex + bucketIndex] = bucketValue;
+                    hexToBucket -= bucketValue;
+                }
+                if (hexToBucket != 0) {
+                    throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
+                }
+            } else {
+                for (size_t bucketIndex = 0; bucketIndex < coefficientsPerCharacter; bucketIndex++) {
+                    if ((characterIndex + bucketIndex) < totalCoefficients) {
+                        const int dummyValue = 0;
+                        M.data[characterIndex + bucketIndex] = dummyValue;
+                    }
+                }
+            }
+        }
+    }
+    const bool isHashExhausted = hashIterationPointer == hashLength;
+    if (!isHashExhausted) {
+        throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    }
+}
 
-        void load_hashes(const std::filesystem::path& jsonFile) {
-            std::ifstream jsonFileStream(jsonFile);
-            nlohmann::json jsonData;
-            jsonFileStream >> jsonData;
+struct PlaintextConversionConfig {
+    const size_t hashLength = 64;
+    const size_t plaintextModulus = p_db;
+    const size_t hexadecimalRange = 16;
+    const std::unordered_set<size_t> supportedPlaintextModuli{4, 16, 256};
+    const size_t coefficientsPerCharacter = determineCoefficientsPerCharacter();
+    const size_t coefficientsPerHash = hashLength * coefficientsPerCharacter;
+    size_t totalCoefficients {};
+    size_t hashesPerPoly {};
 
-            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(getHashes(true));
-            for (auto& element : jsonData[0].items()) {
-                hashesRef.insert(element.value().get<string>());
+    explicit PlaintextConversionConfig(const size_t n) : PlaintextConversionConfig() {
+        totalCoefficients = n * n * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+    explicit PlaintextConversionConfig(MatPoly& out) : PlaintextConversionConfig() {
+        assert(!out.isNTT);
+        totalCoefficients = out.rows * out.cols * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+    private: PlaintextConversionConfig() {
+        const bool isHexadecimalWritable = plaintextModulus % hexadecimalRange == 0 or
+                                           hexadecimalRange % plaintextModulus == 0;
+        assert(isHexadecimalWritable);
+        const bool isSupportedPlaintextModulus =
+                supportedPlaintextModuli.find(plaintextModulus) != supportedPlaintextModuli.end();
+        assert(isSupportedPlaintextModulus);
+    }
+
+    private: size_t determineCoefficientsPerCharacter() const {
+        size_t writeSurface = hexadecimalRange / plaintextModulus;
+        // TODO: Clarify here.
+        if (plaintextModulus < hexadecimalRange) {
+            writeSurface += 1;
+        }
+        if (writeSurface == 0) {
+            writeSurface = 1;
+        }
+        return writeSurface;
+    }
+};
+
+void logHashEncoding(
+    const std::string& hash,
+    const size_t recordCount,
+    const size_t hashCountInPoly,
+    const PlaintextConversionConfig& config
+) {
+    std::cout << "\r [" << recordCount << " | " << hashCountInPoly << " ] Encoding "
+              << hash << " into polynomials under " << config.coefficientsPerCharacter
+              << " coefficients/character." << std::flush;
+}
+
+// Returns: Index where write has ended.
+size_t writeHashToPoly(
+    MatPoly& out,
+    const PlaintextConversionConfig& config,
+    const std::string& hash,
+    size_t writeHead,
+    const size_t recordCount
+) {
+    assert(!out.isNTT);
+    assert(writeHead < config.totalCoefficients);
+    assert(writeHead + config.coefficientsPerHash <= config.totalCoefficients);
+    const bool writeHeadIsAligned =
+            writeHead % config.coefficientsPerHash == 0 or
+            config.coefficientsPerHash % writeHead == 0;
+    assert(writeHeadIsAligned);
+    logHashEncoding(hash, recordCount, writeHead / config.coefficientsPerHash, config);
+    size_t characterPointer = 0;
+    for (size_t index = 0; index < config.coefficientsPerHash; index++) {
+        const bool isHashExhausted = characterPointer >= config.hashLength;
+        if (!isHashExhausted) {
+            int hexToWrite = HexToolkit::hexCharToBase16(hash.at(characterPointer++));
+            assert(hexToWrite >= 0 && hexToWrite < 16);
+            out.data[writeHead + index] = hexToWrite;
+        }
+    }
+    const bool isHashExhausted = characterPointer == config.hashLength;
+    if (!isHashExhausted) {
+        throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    }
+    return writeHead + config.coefficientsPerHash;
+}
+
+template <typename Iterator>
+void generatePackedPoly(MatPoly& out, Iterator& hashIterator, const size_t recordCount) {
+    const PlaintextConversionConfig config(out);
+    assert(config.coefficientsPerCharacter == 1);
+    for (size_t socketIndex = 0; socketIndex < config.hashesPerPoly; socketIndex++) {
+        const bool hashStoreExhausted = hashIterator ==
+                                        Process::Data::hashStore().get<Container::Sequence>().end();
+        if (!hashStoreExhausted) {
+            const std::string& hash = *hashIterator;
+            size_t writeHead = socketIndex * config.coefficientsPerHash;
+            writeHead = writeHashToPoly(out, config, hash, writeHead, recordCount);
+            hashIterator++;
+            if (writeHead > config.totalCoefficients) {
+                throw std::runtime_error("Write head exceeded total coefficients.");
+            }
+        } else {
+            const int dummyValue = 0;
+            for (size_t index = 0; index < config.coefficientsPerHash; index++) {
+                out.data[socketIndex * config.coefficientsPerHash + index] = dummyValue;
             }
         }
     }
@@ -1228,13 +1394,17 @@ namespace Process {
 
 void load_db() {
     Log::cout << "Database assigned to color B." << std::endl;
-    Process::Data::load_hashes(Process::dataSpace("colorB_20.json"));
+    Process::Data::loadHashes(Process::dataSpace("colorB_20.json"));
+    std::cout << "Database assigned to color B." << std::endl;
     // Note: This is hard-coded as 256.
     size_t dim0 = 1 << num_expansions;
     // Note: This resolves to 128.
     size_t num_per = total_n / dim0;
     if (random_data) throw std::runtime_error("Random data has been deleted.");
     // Note: Size of the database (B).
+    // Note:
+    //      num_items = dim0 * num_per
+    //      trials = n0 * n2
     size_t num_bytes_B = sizeof(uint64_t) * dim0 * num_per * n0 * n2 * poly_len;//2 * poly_len;
     NativeLog::cout << "num_bytes_B: " << num_bytes_B << endl;
     B = (uint64_t *)aligned_alloc(64, num_bytes_B);
@@ -1257,27 +1427,33 @@ void load_db() {
     MatPoly pt_encd_raw(n0, n2, false);
     pts_encd = MatPoly(n0, n2);
     pt = MatPoly(n0, n0);
-    auto hashesToLoadIterator = Process::Data::getHashes().begin();
-    int count = 0;
-    int dummyCount = 0;
+    auto hashesToLoadIterator = Process::Data::hashStore().get<Container::Sequence>().begin();
+
+    int loadedHashCount = 0;
+    int paddedPolynomialCount = 0;
+    int databaseRecordCount = 0;
     // Note: For index i in the database.
     for (size_t i = 0; i < total_n; i++) {
-        if (hashesToLoadIterator != Process::Data::getHashes().end()) {
-            generateHashPt(pt_tmp, *hashesToLoadIterator);
-            hashesToLoadIterator++;
-            count++;
+        const bool hashStoreExhausted = hashesToLoadIterator ==
+                                        Process::Data::hashStore().get<Container::Sequence>().end();
+        if (!hashStoreExhausted) {
+            generatePackedPoly(pt_tmp, hashesToLoadIterator, databaseRecordCount);
+            loadedHashCount++;
         } else {
-            generateDummyPt(pt_tmp);
-            dummyCount++;
+            generatePaddedPoly(pt_tmp, databaseRecordCount);
+            paddedPolynomialCount++;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        databaseRecordCount++;
+        // std::this_thread::sleep_for(std::chrono::milliseconds(5));
         // generateRandomPt(pt_tmp);
         pt_encd_raw = pt_tmp;
         // Note: For every randomly generated polynomial.
         for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
             int64_t val = (int64_t) pt_encd_raw.data[pol];
             assert(val >= 0 && val < p_db);
-            // Question: Ensure polynomial is valid?
+            // Note: Recenter mod.
+            //      p_db = small_modulus
+            //      Q_i  = large_modulus
             if (val >= (p_db / 2)) {
                 val = val - (int64_t)p_db;
             }
@@ -1325,10 +1501,10 @@ void load_db() {
     free(BB);
 
     Log::cout << "Database N is " << total_n << "." << std::endl;
-    Log::cout << "Loaded " << count << "/" << Process::Data::getHashes().size()
-              << " hashes and " << dummyCount << " placeholder polynomials." << std::endl;
+    Log::cout << "Loaded " << loadedHashCount << "/" << Process::Data::hashStore().size()
+              << " hashes and " << paddedPolynomialCount << " placeholder polynomials." << std::endl;
 
-    if (hashesToLoadIterator != Process::Data::getHashes().end()) {
+    if (hashesToLoadIterator != Process::Data::hashStore().get<Container::Sequence>().end()) {
         // throw std::runtime_error(
         //     "Failed to load all hashes into the database. "
         //     "Is the database too small?"
@@ -1346,7 +1522,8 @@ void load_db() {
 
 void do_test();
 void do_server();
-void runSeperationTest();
+void runSeparationTest();
+void performPreTests();
 
 #ifdef MAKE_QUERY
 void make_query();
@@ -1432,6 +1609,7 @@ namespace GlobalTimer {
 };
 #endif
 
+bool DEFER_DATABASE_CREATION = false;
 
 int main(int argc, char *argv[]) {
     #ifndef __EMSCRIPTEN__
@@ -1545,14 +1723,17 @@ int main(int argc, char *argv[]) {
         exit(0);
     }
 
-    GlobalTimer::set("Database Generation");
-    load_db();
-    GlobalTimer::stop("Database Generation");
+    performPreTests();
+    if (!DEFER_DATABASE_CREATION) {
+        GlobalTimer::set("Database Generation");
+        load_db();
+        GlobalTimer::stop("Database Generation");
+    }
 
     // do_test();
     // setup_main();
     GlobalTimer::set("Run Separation Test");
-    runSeperationTest();
+    runSeparationTest();
     GlobalTimer::stop("Run Separation Test");
     #endif
 }
@@ -3505,7 +3686,15 @@ void answer_main() {
     assert(areFDLEqual(furtherDimsLocals, furtherDimsLocals_Load));
 }
 
-void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
+void decodeLinearMessage(const PlaintextConversionConfig config) {
+
+}
+
+void extract_main(
+    const MatPoly& S_Extract,
+    const MatPoly& Sp_Extract,
+    const size_t queryIndex
+) {
     // Load server response.
     GlobalTimer::set("Load server response");
     size_t dim0 = 1 << num_expansions;
@@ -3566,63 +3755,89 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     M_result = s_prod;  // M.
     GlobalTimer::stop("Perform C <- Decode(Z) operation to get the encoded message");
 
-    const size_t hashLength = 64;
-    const size_t coefficientRange = p_db;
-    const size_t hexCharacterCount = 16;
-    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
-    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
-    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
-    if (coefficientRange < hexCharacterCount) {
-        characterWriteSpace += 1;
-    }
-    if (characterWriteSpace == 0) {
-        characterWriteSpace = 1;
-    }
 
-    size_t plaintextEncodingLength = M_result.rows * M_result.cols * coeff_count;
-    size_t messageEncodedLength = characterWriteSpace * hashLength;
-    assert(messageEncodedLength < plaintextEncodingLength);
+
+    const PlaintextConversionConfig config(M_result);
     std::stringstream decodedMessageStream;
-    if (characterWriteSpace == 1) {
-        for (size_t i = 0; i < messageEncodedLength; i++) {
-            decodedMessageStream << HexToolkit::base16ToHex[M_result.data[i]];
-        }
-    } else {
-        for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
-            size_t base16Sum = 0;
-            for (size_t j = 0; j < characterWriteSpace; j++) {
-                base16Sum += M_result.data[i + j];
-            }
-            decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
-        }
+    const size_t recordIndex = IDX_TARGET;
+    const size_t readHeadOffset = queryIndex - (config.hashesPerPoly * recordIndex);
+    const size_t readHeadStart = config.coefficientsPerHash * readHeadOffset;
+    const size_t databaseCapacity = config.hashesPerPoly * total_n;
+    const size_t readHeadEnd = readHeadStart + config.coefficientsPerHash;
+    assert(readHeadEnd < databaseCapacity);
+    for (size_t readHead = readHeadStart; readHead < readHeadEnd; readHead++) {
+        decodedMessageStream << HexToolkit::base16ToHex[M_result.data[readHead]];
     }
 
-    bool showMessages = false;
+    // const size_t hashLength = 64;
+    // const size_t coefficientRange = p_db;
+    // const size_t hexCharacterCount = 16;
+    // assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
+    // assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
+    // size_t characterWriteSpace = hexCharacterCount / coefficientRange;
+    // if (coefficientRange < hexCharacterCount) {
+    //     characterWriteSpace += 1;
+    // }
+    // if (characterWriteSpace == 0) {
+    //     characterWriteSpace = 1;
+    // }
+    //
+    // size_t plaintextEncodingLength = M_result.rows * M_result.cols * coeff_count;
+    // size_t messageEncodedLength = characterWriteSpace * hashLength;
+    // assert(messageEncodedLength < plaintextEncodingLength);
+    //
+    //
+    // std::stringstream decodedMessageStream;
+    // if (characterWriteSpace == 1) {
+    //     for (size_t i = 0; i < messageEncodedLength; i++) {
+    //         decodedMessageStream << HexToolkit::base16ToHex[M_result.data[i]];
+    //     }
+    // } else {
+    //     for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
+    //         size_t base16Sum = 0;
+    //         for (size_t j = 0; j < characterWriteSpace; j++) {
+    //             base16Sum += M_result.data[i + j];
+    //         }
+    //         decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
+    //     }
+    // }
+
+    bool showMessages = true;
     if (showMessages) {
+
         Log::cout << "Message dump: \n" << std::endl;
         bool allZeros = true;
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
             if (M_result.data[i] != 0) {
                 allZeros = false;
             }
+            if (i >= readHeadStart && i < readHeadEnd) {
+                std::cout << UnixColours::GREEN;
+            }
+            if (i == readHeadEnd) {
+                std::cout << UnixColours::RESET;
+            }
             std::cout << M_result.data[i] << ",";
         }
         std::cout << std::endl << std::endl;
         Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
-        // Log::cout << "Actual message: ";
-        // for (size_t i = 0; i < corr.rows * corr.cols * coeff_count; i++) {
-        //     Log::cout << corr.data[i] << ",";
-        // }
-        // Log::cout << std::endl;
     }
     Log::cout << "Decoded hash: " << UnixColours::MAGENTA
               << decodedMessageStream.str() << UnixColours::RESET
               << std::endl;
     // Validate hash.
-    const bool hashExistsInFile = Process::Data::getHashes().find(decodedMessageStream.str()) != Process::Data::getHashes().end();
+    const bool hashExistsInFile =
+            Process::Data::hashStore().get<Container::Hash>().find(decodedMessageStream.str()) !=
+            Process::Data::hashStore().end();
     std::cout << "[" << UnixColours::MAGENTA << "Check"
               << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
               << (hashExistsInFile ? "valid." : "invalid.")
+              << UnixColours::RESET << std::endl;
+    const bool hashIsPositionedCorrectly =
+            Process::Data::retrieveHashAtIndex(queryIndex) == decodedMessageStream.str();
+    std::cout << "[" << UnixColours::MAGENTA << "Check"
+              << UnixColours::RESET << "] Hash is positioned " << UnixColours::MAGENTA
+              << (hashExistsInFile ? "correctly." : "incorrectly.")
               << UnixColours::RESET << std::endl;
     // If any, show differences between encoded message and actual.
     MatPoly corr = pt_real;
@@ -3655,18 +3870,37 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     }
 }
 
-void runSeperationTest() {
-//    do_test(); exit(0);
+size_t retrieveRecordIndex(const size_t queryIndex) {
+    const PlaintextConversionConfig config(2);
+    const size_t databaseRecordCount = total_n;
+    const size_t hashesPerRecord = config.hashesPerPoly;
+    const long recordIndex = queryIndex / hashesPerRecord;
+    assert(recordIndex < databaseRecordCount);
+    return recordIndex;
+}
+
+
+void processExitStrategy(int signal) {
+    Log::cout << "Received signal " << signal
+              << ". Exiting process." << std::endl;
+    free(B);
+    exit(signal);
+}
+
+void runSeparationTest() {
+    std::signal(SIGINT, processExitStrategy);
+    std::signal(SIGTERM, processExitStrategy);
+    Log::cout << "Plaintext modulus is: " << p_db << ", which allows " << p_db / 16 << " 4-bit character(s)." << std::endl;
     MatPoly S_Main, Sp_Main, sr_Query;
     GlobalTimer::set("Fig.2: Setup");
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
-    std::string query_command {"halt"};
-    do {
+    size_t queryIndex {};
+    while (true) {
         std::cout << "[" << UnixColours::CYAN << "Input"
                   << UnixColours::RESET << "] " << "Enter query index: " << std::flush;
-        std::cin >> query_command;
-        IDX_TARGET = strtol(query_command.c_str(), NULL, 10);
+        std::cin >> queryIndex;
+        IDX_TARGET = retrieveRecordIndex(queryIndex);
         IDX_DIM0 = IDX_TARGET / (1 << further_dims);
         GlobalTimer::set("Fig.2: Query");
         query_main(S_Main, Sp_Main, sr_Query);
@@ -3675,8 +3909,11 @@ void runSeperationTest() {
         answer_main();
         GlobalTimer::stop("Fig.2: Answer");
         GlobalTimer::set("Fig.2: Extract");
-        extract_main(S_Main, Sp_Main);
+        extract_main(S_Main, Sp_Main, queryIndex);
         GlobalTimer::stop("Fig.2: Extract");
-    } while (query_command != "halt");
-    Log::cout << "Done." << std::endl;
+    }
+}
+
+void performPreTests() {
+    DEFER_DATABASE_CREATION = false;
 }

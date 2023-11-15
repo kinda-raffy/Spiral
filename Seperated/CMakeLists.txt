@@ -8,6 +8,7 @@ target_include_directories(Seperated PUBLIC include)
 target_include_directories(Seperated PUBLIC /home/ubuntu/vcpkg/installed/)
 target_link_libraries(Seperated PRIVATE HEXL::hexl)
 target_link_libraries(Seperated PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(Seperated PRIVATE Boost::boost)
 
 add_compile_definitions(
         TEXP=$(TEXP)

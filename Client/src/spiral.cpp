@@ -1376,18 +1376,18 @@ namespace Process {
 
     namespace Data {
         // Note: const is only modified during load.
-        const std::unordered_set<std::string>& getHashes(const bool set = false) {
+        const std::unordered_set<std::string>& hashStore(const bool set = false) {
             static std::unordered_set<std::string> hashes;
             if (!set) assert(!hashes.empty());
             return hashes;
         }
 
-        void load_hashes(const std::filesystem::path& jsonFile) {
+        void loadHashes(const std::filesystem::path& jsonFile) {
             std::ifstream jsonFileStream(jsonFile);
             nlohmann::json jsonData;
             jsonFileStream >> jsonData;
 
-            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(getHashes(true));
+            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(hashStore(true));
             for (auto& element : jsonData[0].items()) {
                 hashesRef.insert(element.value().get<string>());
             }
@@ -3508,7 +3508,8 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
               << decodedMessageStream.str() << UnixColours::RESET
               << std::endl;
     // Validate hash.
-    const bool hashExistsInFile = Process::Data::getHashes().find(decodedMessageStream.str()) != Process::Data::getHashes().end();
+    const bool hashExistsInFile = Process::Data::hashStore().find(decodedMessageStream.str()) !=
+                                  Process::Data::hashStore().end();
     std::cout << "[" << UnixColours::MAGENTA << "Check"
               << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
               << (hashExistsInFile ? "valid." : "invalid.")
@@ -3566,7 +3567,7 @@ void runSeparationTest() {
     GlobalTimer::set("Fig.2: Setup");
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
-    Process::Data::load_hashes(Process::dataSpace("colorB_12.json"));
+    Process::Data::loadHashes(Process::dataSpace("colorB_12.json"));
     std::string query_command {};
     do {
         std::cout << "[" << UnixColours::CYAN << "Input"

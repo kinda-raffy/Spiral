@@ -17,6 +17,7 @@
 #include <unordered_set>
 #include <thread>
 #include "nlohmann/json.hpp"
+#include "simdjson.h"
 #include <cstdlib>
 #include <csignal>
 #include <boost/multi_index_container.hpp>

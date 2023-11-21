@@ -19,8 +19,8 @@ group "all" {
 }
 
 function "getTag" {
-  params = [name]
-  result = ["spiral_${name}:${VERSION}"]
+  params = [target]
+  result = ["spiral_${target}:${VERSION}"]
 }
 
 target "_spiral" {

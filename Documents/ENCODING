@@ -1,6 +1,0 @@
-1. Each hash is 32 bytes -> 256 bits.
-2. A coefficient can encode 16 bits when plaintext modulus is 16.
-    256 bits / 16 bits = 16 coefficients.
-
-
-1. 64 len hashes of 16 bits each.

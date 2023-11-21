@@ -6,6 +6,7 @@ real-run
 !.vscode/c_cpp_properties.json
 
 venv*/
+**/.venv*/
 Process_Workspace/*.bin
 bin/
 *.db

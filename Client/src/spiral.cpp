@@ -1362,6 +1362,10 @@ namespace GlobalTimer {
 };
 #endif
 
+enum Container{
+    Hash,
+    Sequence
+};
 
 namespace Process {
     const std::filesystem::path processPath("/home/ubuntu/Process_Workspace/");
@@ -1375,26 +1379,112 @@ namespace Process {
     }
 
     namespace Data {
+        typedef boost::multi_index::multi_index_container<
+            std::string,
+            boost::multi_index::indexed_by<
+                boost::multi_index::hashed_unique<
+                    boost::multi_index::identity<std::string>
+                >,
+                boost::multi_index::sequenced<>
+            >
+        > HashStore;
+
         // Note: const is only modified during load.
-        const std::unordered_set<std::string>& hashStore(const bool set = false) {
-            static std::unordered_set<std::string> hashes;
-            if (!set) assert(!hashes.empty());
+        const HashStore& hashStore(const bool set = false) {
+            static HashStore hashes;
+            if (!set) assert(!hashes.get<Container::Hash>().empty());
             return hashes;
         }
 
         void loadHashes(const std::filesystem::path& jsonFile) {
-            std::ifstream jsonFileStream(jsonFile);
-            nlohmann::json jsonData;
-            jsonFileStream >> jsonData;
+            simdjson::ondemand::parser simdParser;
+            auto jsonHash = simdjson::padded_string::load(jsonFile.c_str());
+            auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
+            for (simdjson::ondemand::object container : simdParser.iterate(jsonHash)) {
+                for (auto element : container) {
+                    simdjson::ondemand::value hash = element.value();
+                    hashStoreRef.get<Container::Sequence>().emplace_back(
+                            static_cast<std::string_view>(hash.get_string())
+                    );
+                }
+            }
+        }
 
-            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(hashStore(true));
-            for (auto& element : jsonData[0].items()) {
-                hashesRef.insert(element.value().get<string>());
+        std::string retrieveHashAtIndex(const size_t index) {
+            const auto& hashStoreSequence = hashStore().get<Container::Sequence>();
+            if (index < hashStoreSequence.size()) {
+                auto iterator = hashStoreSequence.begin();
+                std::advance(iterator, index);
+                return *iterator;
+            } else {
+                throw std::out_of_range("Hash index out of range from hash store.");
             }
         }
     }
 }
 
+template <typename T>
+bool isBiEvenlyDivisible(const T& a, const T& b) {
+    return a % b == 0 or b % a == 0;
+}
+
+std::pair<uint8_t, uint8_t> unpackBit(const uint64_t packed) {
+    return std::make_pair((packed >> 4) & 0xF, packed & 0xF);
+}
+
+struct PlaintextConversionConfig {
+    const size_t hashLength = 64;
+    const size_t plaintextModulus = p_db;
+    const size_t hexadecimalRange = 16;
+    const std::unordered_set<size_t> supportedPlaintextModuli{4, 16, 256};
+    const double coefficientsPerCharacter = determineCoefficientsPerCharacter();
+    const size_t coefficientsPerHash = ceil(static_cast<double>(hashLength) * coefficientsPerCharacter);
+    size_t totalCoefficients {};
+    size_t hashesPerPoly {};
+
+    explicit PlaintextConversionConfig(const size_t n) : PlaintextConversionConfig() {
+        totalCoefficients = n * n * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+    explicit PlaintextConversionConfig(MatPoly& out) : PlaintextConversionConfig() {
+        assert(!out.isNTT);
+        totalCoefficients = out.rows * out.cols * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+private: PlaintextConversionConfig() {
+        const bool isHexadecimalWritable = isBiEvenlyDivisible(plaintextModulus, hexadecimalRange);
+        assert(isHexadecimalWritable);
+        const bool isSupportedPlaintextModulus =
+                supportedPlaintextModuli.find(plaintextModulus) != supportedPlaintextModuli.end();
+        assert(isSupportedPlaintextModulus);
+    }
+
+private: double determineCoefficientsPerCharacter() const {
+        assert(isBiEvenlyDivisible(plaintextModulus, hexadecimalRange));
+        double writeSurface = -1.0;
+        if (plaintextModulus <= hexadecimalRange) {
+            writeSurface = static_cast<double>(hexadecimalRange) / static_cast<double>(plaintextModulus);
+        } else if (plaintextModulus > hexadecimalRange) {
+            double bitCount = log2(plaintextModulus);
+            // Note: 16 hex characters can be represented in 4-bits.
+            assert(hexadecimalRange == 16);
+            double characterPerCoefficient = bitCount / 4;
+            writeSurface = 1 / characterPerCoefficient;
+        }
+        assert(writeSurface > 0.0);
+        // Note: Extra coefficient required to encode '0' on smaller plaintexts.
+        if (plaintextModulus < hexadecimalRange) {
+            writeSurface += 1.0;
+        }
+        return writeSurface;
+    }
+};
 
 int main(int argc, char *argv[]) {
     #ifndef __EMSCRIPTEN__
@@ -3390,7 +3480,11 @@ namespace HexToolkit {
     }
 }
 
-void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
+void extract_main(
+    const MatPoly& S_Extract,
+    const MatPoly& Sp_Extract,
+    const size_t queryIndex
+) {
     // Load server response.
     GlobalTimer::set("Retrieving the server response (r)");
     size_t dim0 = 1 << num_expansions;
@@ -3460,60 +3554,118 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     M_result = s_prod;  // M.
     GlobalTimer::stop("Performing C <- Decode(Z) operation to get the encoded message");
 
-    const size_t hashLength = 64;
-    const size_t coefficientRange = p_db;
-    const size_t hexCharacterCount = 16;
-    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
-    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
-    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
-    if (coefficientRange < hexCharacterCount) {
-        characterWriteSpace += 1;
-    }
-    if (characterWriteSpace == 0) {
-        characterWriteSpace = 1;
-    }
-
-    size_t plaintextEncodingLength = M_result.rows * M_result.cols * coeff_count;
-    size_t messageEncodedLength = characterWriteSpace * hashLength;
-    assert(messageEncodedLength < plaintextEncodingLength);
-    std::stringstream decodedMessageStream;
-    if (characterWriteSpace == 1) {
-        for (size_t i = 0; i < messageEncodedLength; i++) {
-            decodedMessageStream << HexToolkit::base16ToHex[M_result.data[i]];
+    if (p_db == 4) {
+        const size_t hashLength = 64;
+        const size_t coefficientRange = p_db;
+        const size_t hexCharacterCount = 16;
+        assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
+        assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
+        size_t characterWriteSpace = hexCharacterCount / coefficientRange;
+        if (coefficientRange < hexCharacterCount) {
+            characterWriteSpace += 1;
         }
+        if (characterWriteSpace == 0) {
+            characterWriteSpace = 1;
+        }
+
+        size_t plaintextEncodingLength = M_result.rows * M_result.cols * coeff_count;
+        size_t messageEncodedLength = characterWriteSpace * hashLength;
+        assert(messageEncodedLength < plaintextEncodingLength);
+        std::stringstream decodedMessageStream;
+        if (characterWriteSpace == 1) {
+            for (size_t i = 0; i < messageEncodedLength; i++) {
+                decodedMessageStream << HexToolkit::base16ToHex[M_result.data[i]];
+            }
+        } else {
+            for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
+                size_t base16Sum = 0;
+                for (size_t j = 0; j < characterWriteSpace; j++) {
+                    base16Sum += M_result.data[i + j];
+                }
+                decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
+            }
+        }
+
+        bool showMessageDump = false;
+        if (showMessageDump) {
+            Log::cout << "Message dump: \n" << std::endl;
+            bool allZeros = true;
+            for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
+                if (M_result.data[i] != 0) {
+                    allZeros = false;
+                }
+                std::cout << M_result.data[i] << ",";
+            }
+            std::cout << std::endl << std::endl;
+            Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
+        }
+        Log::cout << "Decoded hash: " << UnixColours::MAGENTA
+                  << decodedMessageStream.str() << UnixColours::RESET
+                  << std::endl;
+        // Validate hash.
+        const bool hashExistsInFile = Process::Data::hashStore().find(decodedMessageStream.str()) !=
+                                      Process::Data::hashStore().end();
+        std::cout << "[" << UnixColours::MAGENTA << "Check"
+                  << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
+                  << (hashExistsInFile ? "valid." : "invalid.")
+                  << UnixColours::RESET << std::endl;
     } else {
-        for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
-            size_t base16Sum = 0;
-            for (size_t j = 0; j < characterWriteSpace; j++) {
-                base16Sum += M_result.data[i + j];
+        const PlaintextConversionConfig config(M_result);
+        std::stringstream decodedMessageStream;
+        const size_t recordIndex = IDX_TARGET;
+        const size_t readHeadOffset = queryIndex - (config.hashesPerPoly * recordIndex);
+        const size_t readHeadStart = config.coefficientsPerHash * readHeadOffset;
+        const size_t databaseCapacity = config.hashesPerPoly * total_n;
+        const size_t readHeadEnd = readHeadStart + config.coefficientsPerHash;
+        assert(readHeadEnd < databaseCapacity);
+        for (size_t readHead = readHeadStart; readHead < readHeadEnd; readHead++) {
+            if (config.coefficientsPerCharacter == 1) {
+                decodedMessageStream << HexToolkit::base16ToHex[M_result.data[readHead]];
+            } else if (config.coefficientsPerCharacter < 1) {
+                assert(config.plaintextModulus == 256);
+                auto [char1, char2] = unpackBit(M_result.data[readHead]);
+                decodedMessageStream << HexToolkit::base16ToHex[char1] << HexToolkit::base16ToHex[char2];
             }
-            decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
         }
+
+        bool showMessages = false;
+        if (showMessages) {
+            Log::cout << "Message dump: \n" << std::endl;
+            bool allZeros = true;
+            for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
+                if (M_result.data[i] != 0) {
+                    allZeros = false;
+                }
+                if (i >= readHeadStart && i < readHeadEnd) {
+                    std::cout << UnixColours::GREEN;
+                }
+                if (i == readHeadEnd) {
+                    std::cout << UnixColours::RESET;
+                }
+                std::cout << M_result.data[i] << ",";
+            }
+            std::cout << std::endl << std::endl;
+            Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
+        }
+        Log::cout << "Decoded hash: " << UnixColours::MAGENTA
+                  << decodedMessageStream.str() << UnixColours::RESET
+                  << std::endl;
+        // Validate hash.
+        const bool hashExistsInFile =
+                Process::Data::hashStore().get<Container::Hash>().find(decodedMessageStream.str()) !=
+                Process::Data::hashStore().end();
+        std::cout << "[" << UnixColours::MAGENTA << "Check"
+                  << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
+                  << (hashExistsInFile ? "valid." : "invalid.")
+                  << UnixColours::RESET << std::endl;
+        const bool hashIsPositionedCorrectly =
+                Process::Data::retrieveHashAtIndex(queryIndex) == decodedMessageStream.str();
+        std::cout << "[" << UnixColours::MAGENTA << "Check"
+                  << UnixColours::RESET << "] Hash is positioned " << UnixColours::MAGENTA
+                  << (hashExistsInFile ? "correctly." : "incorrectly.")
+                  << UnixColours::RESET << std::endl;
     }
 
-    bool showMessageDump = false;
-    if (showMessageDump) {
-        Log::cout << "Message dump: \n" << std::endl;
-        bool allZeros = true;
-        for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
-            if (M_result.data[i] != 0) {
-                allZeros = false;
-            }
-            std::cout << M_result.data[i] << ",";
-        }
-        std::cout << std::endl << std::endl;
-        Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
-    }
-    Log::cout << "Decoded hash: " << UnixColours::MAGENTA
-              << decodedMessageStream.str() << UnixColours::RESET
-              << std::endl;
-    // Validate hash.
-    const bool hashExistsInFile = Process::Data::hashStore().find(decodedMessageStream.str()) !=
-                                  Process::Data::hashStore().end();
-    std::cout << "[" << UnixColours::MAGENTA << "Check"
-              << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
-              << (hashExistsInFile ? "valid." : "invalid.")
-              << UnixColours::RESET << std::endl;
     // If any, show differences between encoded message and actual.
     MatPoly corr = pt_real;
     if (show_diff) {
@@ -3553,6 +3705,15 @@ void refreshWorkspaceDirectory() {
     }
 }
 
+size_t retrieveRecordIndex(const size_t queryIndex) {
+    const PlaintextConversionConfig config(2);
+    const size_t databaseRecordCount = total_n;
+    const size_t hashesPerRecord = config.hashesPerPoly;
+    const size_t recordIndex = queryIndex / hashesPerRecord;
+    assert(recordIndex < databaseRecordCount);
+    return recordIndex;
+}
+
 void clientExitStrategy(int signal) {
     std::cout << "Received signal " << signal
               << ". Exiting client process." << std::endl;
@@ -3567,24 +3728,28 @@ void runSeparationTest() {
     GlobalTimer::set("Fig.2: Setup");
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
-    Process::Data::loadHashes(Process::dataSpace("colorB_12.json"));
-    std::string query_command {};
-    do {
+    Process::Data::loadHashes(Process::dataSpace("colorB_20.json"));
+    size_t queryIndex {};
+    while (true) {
         std::cout << "[" << UnixColours::CYAN << "Input"
                   << UnixColours::RESET << "] "
                   << "Enter query index: " << std::flush;
-        std::cin >> query_command;
+        std::cin >> queryIndex;
         system("clear");
         Log::cout << "Retrieving hash for index " << UnixColours::MAGENTA
-                  << query_command << UnixColours::RESET
+                  << queryIndex << UnixColours::RESET
                   << " from the database." << std::endl;
-        IDX_TARGET = strtol(query_command.c_str(), NULL, 10);
+        if (p_db != 4) {
+            IDX_TARGET = retrieveRecordIndex(queryIndex);
+        } else {
+            IDX_TARGET = queryIndex;
+        }
         IDX_DIM0 = IDX_TARGET / (1 << further_dims);
         GlobalTimer::set("Fig.2: Query");
         query_main(S_Main, Sp_Main, sr_Query);
         GlobalTimer::stop("Fig.2: Query");
         GlobalTimer::set("Fig.2: Extract");
-        extract_main(S_Main, Sp_Main);
+        extract_main(S_Main, Sp_Main, queryIndex);
         GlobalTimer::stop("Fig.2: Extract");
-    } while (true);
+    }
 }

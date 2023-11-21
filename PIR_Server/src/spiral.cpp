@@ -1152,6 +1152,10 @@ namespace GlobalTimer {
 };
 #endif
 
+enum Container{
+    Hash,
+    Sequence
+};
 
 namespace Process {
     const std::filesystem::path processPath("/home/ubuntu/Process_Workspace/");
@@ -1165,21 +1169,45 @@ namespace Process {
     }
 
     namespace Data {
+        typedef boost::multi_index::multi_index_container<
+            std::string,
+            boost::multi_index::indexed_by<
+                boost::multi_index::hashed_unique<
+                    boost::multi_index::identity<std::string>
+                >,
+                boost::multi_index::sequenced<>
+            >
+        > HashStore;
+
         // Note: const is only modified during load.
-        const std::unordered_set<std::string>& hashStore(const bool set = false) {
-            static std::unordered_set<std::string> hashes;
-            if (!set) assert(!hashes.empty());
+        const HashStore& hashStore(const bool set = false) {
+            static HashStore hashes;
+            if (!set) assert(!hashes.get<Container::Hash>().empty());
             return hashes;
         }
 
         void loadHashes(const std::filesystem::path& jsonFile) {
-            std::ifstream jsonFileStream(jsonFile);
-            nlohmann::json jsonData;
-            jsonFileStream >> jsonData;
+            simdjson::ondemand::parser simdParser;
+            auto jsonHash = simdjson::padded_string::load(jsonFile.c_str());
+            auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
+            for (simdjson::ondemand::object container : simdParser.iterate(jsonHash)) {
+                for (auto element : container) {
+                    simdjson::ondemand::value hash = element.value();
+                    hashStoreRef.get<Container::Sequence>().emplace_back(
+                            static_cast<std::string_view>(hash.get_string())
+                    );
+                }
+            }
+        }
 
-            auto& hashesRef = const_cast<std::unordered_set<std::string>&>(hashStore(true));
-            for (auto& element : jsonData[0].items()) {
-                hashesRef.insert(element.value().get<string>());
+        std::string retrieveHashAtIndex(const size_t index) {
+            const auto& hashStoreSequence = hashStore().get<Container::Sequence>();
+            if (index < hashStoreSequence.size()) {
+                auto iterator = hashStoreSequence.begin();
+                std::advance(iterator, index);
+                return *iterator;
+            } else {
+                throw std::out_of_range("Hash index out of range from hash store.");
             }
         }
     }
@@ -1271,6 +1299,66 @@ void generateHashPt(MatPoly &M, const std::string& hash, const int iterationCoun
     }
 }
 
+
+template <typename T>
+bool isBiEvenlyDivisible(const T& a, const T& b) {
+    return a % b == 0 or b % a == 0;
+}
+
+struct PlaintextConversionConfig {
+    const size_t hashLength = 64;
+    const size_t plaintextModulus = p_db;
+    const size_t hexadecimalRange = 16;
+    const std::unordered_set<size_t> supportedPlaintextModuli{4, 16, 256};
+    const double coefficientsPerCharacter = determineCoefficientsPerCharacter();
+    const size_t coefficientsPerHash = ceil(static_cast<double>(hashLength) * coefficientsPerCharacter);
+    size_t totalCoefficients {};
+    size_t hashesPerPoly {};
+
+    explicit PlaintextConversionConfig(const size_t n) : PlaintextConversionConfig() {
+        totalCoefficients = n * n * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+    explicit PlaintextConversionConfig(MatPoly& out) : PlaintextConversionConfig() {
+        assert(!out.isNTT);
+        totalCoefficients = out.rows * out.cols * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+private: PlaintextConversionConfig() {
+        const bool isHexadecimalWritable = isBiEvenlyDivisible(plaintextModulus, hexadecimalRange);
+        assert(isHexadecimalWritable);
+        const bool isSupportedPlaintextModulus =
+                supportedPlaintextModuli.find(plaintextModulus) != supportedPlaintextModuli.end();
+        assert(isSupportedPlaintextModulus);
+    }
+
+private: double determineCoefficientsPerCharacter() const {
+        assert(isBiEvenlyDivisible(plaintextModulus, hexadecimalRange));
+        double writeSurface = -1.0;
+        if (plaintextModulus <= hexadecimalRange) {
+            writeSurface = static_cast<double>(hexadecimalRange) / static_cast<double>(plaintextModulus);
+        } else if (plaintextModulus > hexadecimalRange) {
+            double bitCount = log2(plaintextModulus);
+            // Note: 16 hex characters can be represented in 4-bits.
+            assert(hexadecimalRange == 16);
+            double characterPerCoefficient = bitCount / 4;
+            writeSurface = 1 / characterPerCoefficient;
+        }
+        assert(writeSurface > 0.0);
+        // Note: Extra coefficient required to encode '0' on smaller plaintexts.
+        if (plaintextModulus < hexadecimalRange) {
+            writeSurface += 1.0;
+        }
+        return writeSurface;
+    }
+};
+
 void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
     std::cout << "\r [" << iterationCount
               << "] Encoding dummy value into remaining polynomials."
@@ -1281,9 +1369,90 @@ void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyVal
     }
 }
 
+void logHashEncoding(
+        const std::string& hash,
+        const size_t recordCount,
+        const size_t hashCountInPoly,
+        const PlaintextConversionConfig& config
+) {
+    std::cout << "\r [" << recordCount << " | "
+              << hashCountInPoly << "]" << (hashCountInPoly < 100 ? " ": "") << (recordCount < 100 ? " ": "") << " Encoding "
+              << hash << " into polynomials under " << config.coefficientsPerCharacter
+              << " coefficients/character." << std::flush;
+}
+
+uint64_t performBitPacking(const uint8_t a, const uint8_t b) {
+    return (a << 4) | b;
+}
+
+std::pair<uint8_t, uint8_t> unpackBit(const uint64_t packed) {
+    return std::make_pair((packed >> 4) & 0xF, packed & 0xF);
+}
+
+// Returns: Index where write has ended.
+size_t writeHashToPoly(
+        MatPoly& out,
+        const PlaintextConversionConfig& config,
+        const std::string& hash,
+        size_t writeHead,
+        const size_t recordCount
+) {
+    assert(!out.isNTT);
+    assert(writeHead < config.totalCoefficients);
+    assert(writeHead + config.coefficientsPerHash <= config.totalCoefficients);
+    const bool writeHeadIsAligned = isBiEvenlyDivisible(writeHead, config.coefficientsPerHash);
+    assert(writeHeadIsAligned);
+    logHashEncoding(hash, recordCount, writeHead / config.coefficientsPerHash, config);
+    size_t characterPointer = 0;
+    for (size_t coefficientIndex = 0; coefficientIndex < config.coefficientsPerHash; coefficientIndex++) {
+        const bool isHashExhausted = characterPointer >= config.hashLength;
+        if (!isHashExhausted) {
+            const int hexToWrite = HexToolkit::hexCharToBase16(hash.at(characterPointer++));
+            assert(hexToWrite >= 0 && hexToWrite < 16);
+            if (config.plaintextModulus == 16) {
+                out.data[writeHead + coefficientIndex] = hexToWrite;
+            } else if (config.plaintextModulus == 256) {
+                const int nextHexToWrite = HexToolkit::hexCharToBase16(hash.at(characterPointer++));
+                out.data[writeHead + coefficientIndex] = performBitPacking(hexToWrite, nextHexToWrite);
+            }
+        }
+    }
+    const bool isHashExhausted = characterPointer == config.hashLength;
+    if (!isHashExhausted) {
+        throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    }
+    return writeHead + config.coefficientsPerHash;
+}
+
+template <typename Iterator>
+void generatePackedPoly(MatPoly& out, Iterator& hashIterator, const size_t recordCount) {
+    const PlaintextConversionConfig config(out);
+    assert(config.coefficientsPerCharacter <= 1);
+    // Note: Socket is the number of coefficients required to store a single char.
+    for (size_t socketIndex = 0; socketIndex < config.hashesPerPoly; socketIndex++) {
+        const bool hashStoreExhausted = hashIterator ==
+                                        Process::Data::hashStore().get<Container::Sequence>().end();
+        if (!hashStoreExhausted) {
+            const std::string& hash = *hashIterator;
+            size_t writeHead = socketIndex * config.coefficientsPerHash;
+            writeHead = writeHashToPoly(out, config, hash, writeHead, recordCount);
+            hashIterator++;
+            if (writeHead > config.totalCoefficients) {
+                throw std::runtime_error("Write head exceeded total coefficients.");
+            }
+        } else {
+            // Note: This should ideally only happen in the very last poly.
+            const int dummyValue = 0;
+            for (size_t index = 0; index < config.coefficientsPerHash; index++) {
+                out.data[socketIndex * config.coefficientsPerHash + index] = dummyValue;
+            }
+        }
+    }
+}
+
 void load_db() {
     Log::cout << "Database assigned to color B." << std::endl;
-    Process::Data::loadHashes(Process::dataSpace("colorB_12.json"));
+    Process::Data::loadHashes(Process::dataSpace("colorB_20.json"));
     size_t dim0 = 1 << num_expansions;
     size_t num_per = total_n / dim0;
     if (random_data) {
@@ -1355,19 +1524,27 @@ void load_db() {
     MatPoly pt_encd_raw(n0, n2, false);
     pts_encd = MatPoly(n0, n2);
     pt = MatPoly(n0, n0);
-    auto hashesToLoadIterator = Process::Data::hashStore().begin();
-    int hashLoadCount = 0;
-    int dummyCount = 0;
+    auto hashesToLoadIterator = Process::Data::hashStore().get<Container::Sequence>().begin();
+    int loadedPolyCount = 0;
+    int paddedPolynomialCount = 0;
+    int databaseRecordCount = 0;
     for (size_t i = 0; i < total_n; i++) {
-        if (hashesToLoadIterator != Process::Data::hashStore().end()) {
-            generateHashPt(pt_tmp, *hashesToLoadIterator, hashLoadCount);
-            hashesToLoadIterator++;
-            hashLoadCount++;
+        const bool hashStoreExhausted = hashesToLoadIterator ==
+                                        Process::Data::hashStore().get<Container::Sequence>().end();
+        if (!hashStoreExhausted) {
+            if (p_db == 4) {
+                generateHashPt(pt_tmp, *hashesToLoadIterator, loadedPolyCount);
+                hashesToLoadIterator++;
+            } else {
+                generatePackedPoly(pt_tmp, hashesToLoadIterator, databaseRecordCount);
+                loadedPolyCount++;
+            }
+            loadedPolyCount++;
         } else {
-            generatePaddedPoly(pt_tmp, dummyCount);
-            dummyCount++;
+            generatePaddedPoly(pt_tmp, databaseRecordCount);
+            paddedPolynomialCount++;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        databaseRecordCount++;
         pt_encd_raw = pt_tmp;
         for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
             int64_t val = (int64_t) pt_encd_raw.data[pol];
@@ -1412,14 +1589,11 @@ void load_db() {
     std::cout << std::endl;  // For carriage return.
 
     Log::cout << "Database N is " << total_n << "." << std::endl;
-    Log::cout << "Loaded " << hashLoadCount << "/" << Process::Data::hashStore().size()
-              << " hashes and " << dummyCount << " placeholder polynomials." << std::endl;
+    Log::cout << "Encoded " << Process::Data::hashStore().size()
+              << " hashes into " << loadedPolyCount << " polys and padded "
+              << paddedPolynomialCount << " polynomials." << std::endl;
 
-    if (hashesToLoadIterator != Process::Data::hashStore().end()) {
-        // throw std::runtime_error(
-        //     "Failed to load all hashes into the database. "
-        //     "Is the database too small?"
-        // );
+    if (hashesToLoadIterator != Process::Data::hashStore().get<Container::Sequence>().end()) {
         std::cerr << "Failed to load all hashes into the database. "
                   << "Is the database too small?" << std::endl;
     }
@@ -1431,8 +1605,6 @@ void load_db() {
     NativeLog::cout << "done loading/generating db." << endl;
 }
 
-void do_test();
-void do_server();
 void runSeparationTest();
 
 #ifdef MAKE_QUERY

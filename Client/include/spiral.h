@@ -18,6 +18,16 @@
 #include <unistd.h>
 #include <cerrno>
 
+#include <algorithm>
+#include <unordered_set>
+#include "nlohmann/json.hpp"
+#include "simdjson.h"
+#include <cstdlib>
+#include <csignal>
+
+#include <boost/multi_index_container.hpp>
+#include <boost/multi_index/hashed_index.hpp>
+#include <boost/multi_index/sequenced_index.hpp>
 
 #ifndef __EMSCRIPTEN__
     // #include <omp.h>

@@ -76,14 +76,19 @@ instructions for _both_ terminals unless otherwise specified.
     cd /home/ubuntu/Spiral
     ```
 2. Decide on the database configuration you would like to use. Certain
-   configurations, such as the database and element size, are required
-   at compilation. This [section](README.md#popular-configurations) has some
+   variables, such as the database and element size, are required
+   at build time. This [section](README.md#popular-configurations) has some
    popular
-   configurations. For this example, we will use a database of size
+   configurations for these variables. For this example, we will use a database
+   of size
    `2^20` with elements of `32` bytes each. This configuration has the
-   build folder name of `build_20_32`.
+   build folder name of `build_20_32`. Alternatively, refer to
+   [this](./Documents/Configuration) directory for a comprehensive list of all
+   available configurations. If you do choose to use an alternative
+   configuration,
+   ensure you replace `build_20_32` with `build_<database_size>_<element_size>`.
 3. Generate the build files. Note: replace `build_20_32` with the build folder
-   name of your desired database configuration. This command can be ran in any
+   name of your desired database configuration. This command can be run in any
    of the two terminals.
    ```bash
    cmake -DCMAKE_BUILD_TYPE=Release \
@@ -96,8 +101,10 @@ instructions for _both_ terminals unless otherwise specified.
 4. Build the Client and Server executables. Over here, you will need to specify
    a number of build parameters. These parameters are determined during
    automatic parameter selection, and can be found in the 'build
-   options' of the [configuration](#popular-configurations) table.
-    1. On the **client** terminal, specify the `Client` target.
+   options' of the [configuration](#popular-configurations) table. If you are
+   using a configuration from [this](./Documents/Configuration) directory, then
+   these options are listed under `Build Configuration:`.
+    1. On the **client** terminal, build the `Client` target.
        ```bash
        cmake --build /home/ubuntu/Spiral/build_20_32 \
              --target Client -v -j4 \
@@ -112,7 +119,7 @@ instructions for _both_ terminals unless otherwise specified.
                    QNUMREST=0 \
                    OUTN=2
        ```
-    2. On the **server** terminal, specify the `Server` target.
+    2. On the **server** terminal, build the `Server` target.
        ```bash
        cmake --build /home/ubuntu/Spiral/build_20_32 \
              --target Server -v -j4 \
@@ -131,13 +138,40 @@ instructions for _both_ terminals unless otherwise specified.
 ## Execution Instructions
 
 These instructions assume you have the two terminals from
-the [build process](#build-instructions) open.
+the [build process](#build-instructions) still open.
+
+The `client` and `server` executables require 3 arguments. The **first two** are
+related to the number of dimensions and folding during query-data processing. To
+put it simply, these will determine the number of 'actual' records in the
+database. These arguments are selected during automatic parameter selection
+which is done via the `select_params.py` script. For convenience, these two
+arguments are listed in the [configuration](#popular-configurations) table or
+under `Run Cofiguration:` in the [configuration](./Documents/Configuration)
+directory. If you are using this directory, then only the
+**first two** numbers after `./spiral` are relevant. For example, for the
+file `20_32.config`, the run configuration lists the following:
+
+```text
+Run Configuration:
+./spiral 7 6 7055 a
+```
+
+In this case, the first two numbers are `7` and `6`.
+
+The third argument is the name of the data file that contains a list of hashes
+in `json`. This is file name (`colorB_10.json`) and _not_ the file
+path (`Database_Data/colorB_10.json`). These data files are located in the
+`Database_Data` directory. The client requires the database file to verify the
+hashes received from the server are correct.
+
+Finally, the `client` and `server` executables must be executed with the same
+arguments and the `client` should begin before the `server`.
 
 1. On the **client** terminal, run the `Client` executable.
     ```bash
-    ./build_20_32/Client/Client 8 7 1234
+    ./build_20_32/Client/Client 7 6 colorB_10.json
     ```
 2. On the **server** terminal, run the `Server` executable.
     ```bash
-    ./build_20_32/PIR_Server/Server 8 7 1234
+    ./build_20_32/PIR_Server/Server 7 6 colorB_10.json
     ```

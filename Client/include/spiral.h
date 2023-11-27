@@ -98,9 +98,9 @@ uint64_t *constant_half;
 
 size_t IDX_TARGET = 14;
 size_t IDX_DIM0 = IDX_TARGET / (1 << further_dims);
+std::string DATA_FILENAME = std::string();
 
 /**
- * @todo CONFIRM.
  * @brief Manages heap FurtherDims (C_GWS) related variables.
 */
 class FurtherDimsLocals {

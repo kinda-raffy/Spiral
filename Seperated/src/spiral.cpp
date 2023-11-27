@@ -1181,7 +1181,7 @@ namespace HexToolkit {
     }
 }
 
-void generateRandomPt(MatPoly &M) {
+void generateRandomPoly(MatPoly &M) {
     assert(!M.isNTT);
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
         M.data[i] = rand() % (p_db);
@@ -1198,7 +1198,7 @@ void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyVal
     }
 }
 
-void generateHashPt(MatPoly &M, const std::string& hash, const int iterationCount) {
+void generateBucketedPoly(MatPoly &M, const std::string& hash, const int iterationCount) {
     assert(!M.isNTT);
     assert(hash.size() == 64);
     const size_t hashLength = hash.size();

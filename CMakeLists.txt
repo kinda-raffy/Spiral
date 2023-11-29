@@ -52,6 +52,9 @@ if(USE_NATIVELOG)
 endif()
 
 find_package(HEXL CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(simdjson CONFIG REQUIRED)
+find_package(Boost 1.83.0 REQUIRED)
 
 add_subdirectory(Seperated)
 add_subdirectory(Client)

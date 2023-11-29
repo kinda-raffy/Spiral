@@ -9,6 +9,21 @@ import random
 import re
 import argparse
 
+PRINT_PARAMS_ONLY = True
+if PRINT_PARAMS_ONLY:
+    script_path = os.path.abspath(sys.argv[0])
+    script_dir = os.path.dirname(script_path)
+    os.chdir(script_dir)
+
+
+CONFIG_PATH = "../Documents/Configuration/"
+def create_file(file_name):
+    return open(CONFIG_PATH + file_name, 'w')
+
+# Build args then run args.
+AUTOMATIC_PARAM_CONFIG = list()
+
+
 parser = argparse.ArgumentParser(description='Run Spiral.')
 parser.add_argument('--stream',
                     help='measure performance for streaming', action='store_true')
@@ -366,8 +381,11 @@ def make_for(params):
     cmd = cmd_mk(vals)
     if not args.quiet:
         print(cmd)
-    s = subprocess.check_output(cmd, shell=True)
-    return s
+    AUTOMATIC_PARAM_CONFIG.append(param_f(vals))
+    if not PRINT_PARAMS_ONLY:
+        s = subprocess.check_output(cmd, shell=True)
+        return s
+    return None
 
 command_base = "./spiral"
 command_opts_incorr = "a --random-data"
@@ -379,8 +397,12 @@ def run_spiral(nu_1, nu_2, opts):
     cmd_str = f"{command_base} {nu_1} {nu_2} {ridx} {opts}"
     if high_rate:
         cmd_str += " --high-rate"
-    s = subprocess.check_output(cmd_str, shell=True)
-    return s.decode('utf8')
+    # List in value created in make_for.
+    AUTOMATIC_PARAM_CONFIG.append(cmd_str)
+    if not PRINT_PARAMS_ONLY:
+        s = subprocess.check_output(cmd_str, shell=True)
+        return s.decode('utf8')
+    return None
 
 def analyze_spiral(s, factor=1):
     exp_re = r"\s+Main expansion.*:\s+([0-9]+)"
@@ -566,10 +588,23 @@ if args.dry_run:
 opts = command_opts_corr if args.corr else command_opts_incorr
 runs_l = []
 for i in range(args.trials):
-    run_s = run_and_analyze_spiral(params["nu_1"], params["nu_2"], factor, opts=opts)
-    runs_l.append(run_s)
-    if not args.quiet:
-        pprint.pprint(run_s)
+    try:
+        run_s = run_and_analyze_spiral(params["nu_1"], params["nu_2"], factor, opts=opts)
+        runs_l.append(run_s)
+        if not args.quiet:
+            pprint.pprint(run_s)
+    except Exception:
+        pass
+
+import json
+with create_file(f"{args.targetnum}_{itemsize}.config") as config_file:
+    config_file.write("Build Configuration:\n")
+    config_file.write(AUTOMATIC_PARAM_CONFIG[0])
+    config_file.write("\n\nRun Configuration:\n")
+    config_file.write(AUTOMATIC_PARAM_CONFIG[1])
+
+if PRINT_PARAMS_ONLY:
+    sys.exit(0)
 
 avgd_runs = {k: sum([r[k] for r in runs_l])/len(runs_l) for k in runs_l[0].keys()}
 this_n = 2

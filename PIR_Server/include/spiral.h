@@ -18,6 +18,17 @@
 #include <unistd.h>
 #include <cerrno>
 
+#include <thread>
+#include <algorithm>
+#include <unordered_set>
+#include "nlohmann/json.hpp"
+#include "simdjson.h"
+#include <cstdlib>
+#include <csignal>
+
+#include <boost/multi_index_container.hpp>
+#include <boost/multi_index/hashed_index.hpp>
+#include <boost/multi_index/sequenced_index.hpp>
 
 #ifndef __EMSCRIPTEN__
     // #include <omp.h>
@@ -88,9 +99,9 @@ uint64_t *constant_half;
 
 size_t IDX_TARGET = 14;
 size_t IDX_DIM0 = IDX_TARGET / (1 << further_dims);
+std::string DATA_FILENAME = std::string();
 
 /**
- * @todo CONFIRM.
  * @brief Manages heap FurtherDims (C_GWS) related variables.
 */
 class FurtherDimsLocals {

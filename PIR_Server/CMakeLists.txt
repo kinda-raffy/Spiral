@@ -7,6 +7,10 @@ add_executable(Server ${SRC_FILES} ${HEADER_FILES})
 target_include_directories(Server PUBLIC include)
 target_include_directories(Server PUBLIC /home/ubuntu/vcpkg/installed/)
 target_link_libraries(Server PRIVATE HEXL::hexl)
+target_link_libraries(Server PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(Server PRIVATE Boost::boost)
+target_link_libraries(Server PRIVATE simdjson::simdjson)
+
 add_compile_definitions(
     TEXP=$(TEXP)
     TEXPRIGHT=$(TEXPRIGHT)

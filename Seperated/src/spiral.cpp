@@ -94,16 +94,6 @@ namespace Log {
     Cout cout;
 }
 
-void generate_random_pt(MatPoly &M) {
-    assert(!M.isNTT);
-    // Question: How does it create a random polynomial here?
-    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
-        // Note: p_db is the build variable PVALUE. For 20_32 it is 16.
-        M.data[i] = rand() % (p_db);
-        // M.data[i] = 8237948 % (p_db);
-    }
-}
-
 void get_gadget_1(MatPoly &G) { // n0 x m1
     // identity
     for (size_t j = 0; j < m1; j++) {
@@ -1118,63 +1108,329 @@ void generate_gadgets() {
     buildGadget(G_hat);
 }
 
-void load_db() {
-    // Note: This is hard-coded as 256.
-    size_t dim0 = 1 << num_expansions;
-    // Note: This resolves to 128.
-    size_t num_per = total_n / dim0;
-    // Note: Ignored.
-    if (random_data) {
-        size_t num_words = dummyWorkingSet * dim0 * num_per * n0 * n2;
-        B = (uint64_t *)aligned_alloc(64, sizeof(uint64_t) * num_words);
-        random_device rd;
-        mt19937_64 gen2(rd()); // NOT SECURE
-        uniform_int_distribution<uint64_t> dist(numeric_limits<uint64_t>::min(), numeric_limits<uint64_t>::max());
-        uint64_t val = dist(gen2) % (p_db/4);
+enum Container{
+    Hash,
+    Sequence
+};
 
-        for (size_t r = 0; r < n0; r++) {
-            for (size_t c = 0; c < n2; c++) {
-                pt_real.data[(r * n2 + c) * poly_len] = val;
+namespace Process {
+    const std::filesystem::path processPath("../../Database_Data");
+
+    std::filesystem::path dataSpace(const std::string& filename) {
+        return processPath / std::filesystem::path(filename);
+    }
+
+    namespace Data {
+        typedef boost::multi_index::multi_index_container<
+            std::string,
+            boost::multi_index::indexed_by<
+                boost::multi_index::hashed_unique<
+                    boost::multi_index::identity<std::string>
+                >,
+                boost::multi_index::sequenced<>
+            >
+        > HashStore;
+
+        // Note: const is only modified during load.
+        const HashStore& hashStore(const bool set = false) {
+            static HashStore hashes;
+            if (!set) assert(!hashes.get<Container::Hash>().empty());
+            return hashes;
+        }
+
+        void loadHashes(const std::filesystem::path& jsonFile) {
+            simdjson::ondemand::parser simdParser;
+            auto jsonHash = simdjson::padded_string::load(jsonFile.c_str());
+            auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
+            for (simdjson::ondemand::object container : simdParser.iterate(jsonHash)) {
+                for (auto element : container) {
+                    simdjson::ondemand::value hash = element.value();
+                    hashStoreRef.get<Container::Sequence>().emplace_back(
+                        static_cast<std::string_view>(hash.get_string())
+                    );
+                }
             }
         }
 
-        MatPoly pt_encd_raw = pt_real;
-        for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
-            int64_t val = (int64_t) pt_encd_raw.data[pol];
-            assert(val >= 0 && val < p_db);
-            if (val >= (p_db / 2)) {
-                val = val - (int64_t)p_db;
+        std::string retrieveHashAtIndex(const size_t index) {
+            const auto& hashStoreSequence = hashStore().get<Container::Sequence>();
+            if (index < hashStoreSequence.size()) {
+                auto iterator = hashStoreSequence.begin();
+                std::advance(iterator, index);
+                return *iterator;
+            } else {
+                throw std::out_of_range("Hash index out of range from hash store.");
             }
-            if (val < 0) {
-                val += Q_i;
-            }
-            assert(val >= 0 && val < Q_i);
-            pt_encd_raw.data[pol] = val;
         }
-        to_ntt(pts_encd, pt_encd_raw);
-        for (size_t dws = 0; dws < dummyWorkingSet; dws++) {
-            for (size_t i = 0; i < num_per; i++) {
-                for (size_t j = 0; j < n2; j++) {
-                    for (size_t k = 0; k < dim0; k++) {
-                        for (size_t l = 0; l < n0; l++) {
-                            size_t idx = dws * (num_per * n2 * dim0 * n0)
-                                        + i * (n2 * dim0 * n0)
-                                        + j * (dim0 * n0)
-                                        + k * (n0)
-                                        + l;
-                            uint64_t val1 = pts_encd.data[(j * n0 + l)*crt_count*poly_len];
-                            uint64_t val2 = pts_encd.data[(j * n0 + l)*crt_count*poly_len + poly_len];
-                            B[idx] = val1 + (val2 << 32);
-                        }
+    }
+}
+
+namespace HexToolkit {
+    const char base16ToHex[16] = {
+        '0', '1', '2', '3',
+        '4', '5', '6', '7',
+        '8', '9', 'a', 'b',
+        'c', 'd', 'e', 'f'
+    };
+
+    int hexCharToBase16(char hexChar) {
+        if (hexChar >= '0' && hexChar <= '9') return hexChar - '0';
+        if (hexChar >= 'a' && hexChar <= 'f') return hexChar - 'a' + 10;
+        if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
+        throw std::invalid_argument("Invalid hexadecimal character");
+    }
+}
+
+void generateRandomPoly(MatPoly &M) {
+    assert(!M.isNTT);
+    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
+        M.data[i] = rand() % (p_db);
+    }
+}
+
+void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
+    std::cout << "\r [" << iterationCount
+              << "] Encoding dummy value into remaining polynomials."
+              << std::string(100, ' ') << std::flush;
+    for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
+        assert(dummyValue >= 0 and dummyValue < p_db);
+        M.data[i] = dummyValue;
+    }
+}
+
+void generateBucketedPoly(MatPoly &M, const std::string& hash, const int iterationCount) {
+    assert(!M.isNTT);
+    assert(hash.size() == 64);
+    const size_t hashLength = hash.size();
+    const size_t plaintextModulus = p_db;
+    const size_t hexadecimalRange = 16;
+    const bool isHexadecimalWritable = plaintextModulus % hexadecimalRange == 0 or
+                                       hexadecimalRange % plaintextModulus == 0;
+    assert(isHexadecimalWritable);
+
+    auto isSupportedPlaintextModulus = [](const size_t plaintextModulus) {
+        const std::unordered_set<size_t> supportedPlaintextModuli{4, 16, 256};
+        return supportedPlaintextModuli.find(plaintextModulus) != supportedPlaintextModuli.end();
+    };
+    assert(isSupportedPlaintextModulus(plaintextModulus));
+
+    size_t coefficientsPerCharacter = hexadecimalRange / plaintextModulus;
+    // TODO: Clarify here.
+    if (plaintextModulus < hexadecimalRange) {
+        coefficientsPerCharacter += 1;
+    }
+    if (coefficientsPerCharacter == 0) {
+        coefficientsPerCharacter = 1;
+    }
+
+    const size_t totalCoefficients = M.rows * M.cols * poly_len;
+    const size_t coefficientsPerHash = hashLength * coefficientsPerCharacter;
+    assert(totalCoefficients > coefficientsPerHash);
+    std::cout << "\r [" << iterationCount << "] Encoding "
+              << hash << " into polynomials under " << coefficientsPerCharacter
+              << " coefficients/character." << std::flush;
+    size_t hashIterationPointer = 0;
+    if (coefficientsPerCharacter == 1) {
+        for (size_t index = 0; index < totalCoefficients; index++) {
+            const bool isHashExhausted = hashIterationPointer >= hashLength;
+            if (!isHashExhausted) {
+                int hexToWrite = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
+                assert(hexToWrite >= 0 && hexToWrite < 16);
+                M.data[index] = hexToWrite;
+            } else {
+                const int dummyValue = 0;
+                M.data[index] = dummyValue;
+            }
+        }
+    } else {
+        int bucketMaxValue = static_cast<int>(plaintextModulus) - 1;
+        for (size_t characterIndex = 0;
+             characterIndex < totalCoefficients;
+             characterIndex += coefficientsPerCharacter) {
+            const bool isHashExhausted = hashIterationPointer >= hashLength;
+            if (!isHashExhausted) {
+                int hexToBucket = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
+                // Perform bucketing.
+                for (size_t bucketIndex = 0; bucketIndex < coefficientsPerCharacter; bucketIndex++) {
+                    // Note: When character is exhausted, bucketMaxValue should default
+                    //       to the dummy value 0.
+                    int bucketValue = std::min(bucketMaxValue, hexToBucket);
+                    assert(bucketValue >= 0 or bucketValue < p_db);
+                    M.data[characterIndex + bucketIndex] = bucketValue;
+                    hexToBucket -= bucketValue;
+                }
+                if (hexToBucket != 0) {
+                    throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
+                }
+            } else {
+                for (size_t bucketIndex = 0; bucketIndex < coefficientsPerCharacter; bucketIndex++) {
+                    if ((characterIndex + bucketIndex) < totalCoefficients) {
+                        const int dummyValue = 0;
+                        M.data[characterIndex + bucketIndex] = dummyValue;
                     }
                 }
             }
         }
-        pt_encd_correct = MatPoly(n0, n2);
-        pt_correct = MatPoly(n0, n0);
-        return;
     }
+    const bool isHashExhausted = hashIterationPointer == hashLength;
+    if (!isHashExhausted) {
+        throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    }
+}
+
+template <typename T>
+bool isBiEvenlyDivisible(const T& a, const T& b) {
+    return a % b == 0 or b % a == 0;
+}
+
+struct PlaintextConversionConfig {
+    const size_t hashLength = 64;
+    const size_t plaintextModulus = p_db;
+    const size_t hexadecimalRange = 16;
+    const std::unordered_set<size_t> supportedPlaintextModuli{4, 16, 256};
+    const double coefficientsPerCharacter = determineCoefficientsPerCharacter();
+    const size_t coefficientsPerHash = ceil(static_cast<double>(hashLength) * coefficientsPerCharacter);
+    size_t totalCoefficients {};
+    size_t hashesPerPoly {};
+
+    explicit PlaintextConversionConfig(const size_t n) : PlaintextConversionConfig() {
+        totalCoefficients = n * n * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+    explicit PlaintextConversionConfig(MatPoly& out) : PlaintextConversionConfig() {
+        assert(!out.isNTT);
+        totalCoefficients = out.rows * out.cols * poly_len;
+        assert(totalCoefficients > coefficientsPerHash);
+        assert(totalCoefficients % coefficientsPerHash == 0);
+        hashesPerPoly = totalCoefficients / coefficientsPerHash;
+    }
+
+    private: PlaintextConversionConfig() {
+        const bool isHexadecimalWritable = isBiEvenlyDivisible(plaintextModulus, hexadecimalRange);
+        assert(isHexadecimalWritable);
+        const bool isSupportedPlaintextModulus =
+                supportedPlaintextModuli.find(plaintextModulus) != supportedPlaintextModuli.end();
+        assert(isSupportedPlaintextModulus);
+    }
+
+    private: double determineCoefficientsPerCharacter() const {
+        assert(isBiEvenlyDivisible(plaintextModulus, hexadecimalRange));
+        double writeSurface = -1.0;
+        if (plaintextModulus <= hexadecimalRange) {
+            writeSurface = static_cast<double>(hexadecimalRange) / static_cast<double>(plaintextModulus);
+        } else if (plaintextModulus > hexadecimalRange) {
+            double bitCount = log2(plaintextModulus);
+            // Note: 16 hex characters can be represented in 4-bits.
+            assert(hexadecimalRange == 16);
+            double characterPerCoefficient = bitCount / 4;
+            writeSurface = 1 / characterPerCoefficient;
+        }
+        assert(writeSurface > 0.0);
+        // Note: Extra coefficient required to encode '0' on smaller plaintexts.
+        if (plaintextModulus < hexadecimalRange) {
+            writeSurface += 1.0;
+        }
+        return writeSurface;
+    }
+};
+
+void logHashEncoding(
+    const std::string& hash,
+    const size_t recordCount,
+    const size_t hashCountInPoly,
+    const PlaintextConversionConfig& config
+) {
+    std::cout << "\r [" << recordCount << " | "
+              << hashCountInPoly << "]" << (hashCountInPoly < 100 ? " ": "") << (recordCount < 100 ? " ": "") << " Encoding "
+              << hash << " into polynomials under " << config.coefficientsPerCharacter
+              << " coefficients/character." << std::flush;
+}
+
+uint64_t performBitPacking(const uint8_t a, const uint8_t b) {
+    return (a << 4) | b;
+}
+
+std::pair<uint8_t, uint8_t> unpackBit(const uint64_t packed) {
+    return std::make_pair((packed >> 4) & 0xF, packed & 0xF);
+}
+
+// Returns: Index where write has ended.
+size_t writeHashToPoly(
+    MatPoly& out,
+    const PlaintextConversionConfig& config,
+    const std::string& hash,
+    size_t writeHead,
+    const size_t recordCount
+) {
+    assert(!out.isNTT);
+    assert(writeHead < config.totalCoefficients);
+    assert(writeHead + config.coefficientsPerHash <= config.totalCoefficients);
+    const bool writeHeadIsAligned = isBiEvenlyDivisible(writeHead, config.coefficientsPerHash);
+    assert(writeHeadIsAligned);
+    logHashEncoding(hash, recordCount, writeHead / config.coefficientsPerHash, config);
+    size_t characterPointer = 0;
+    for (size_t coefficientIndex = 0; coefficientIndex < config.coefficientsPerHash; coefficientIndex++) {
+        const bool isHashExhausted = characterPointer >= config.hashLength;
+        if (!isHashExhausted) {
+            const int hexToWrite = HexToolkit::hexCharToBase16(hash.at(characterPointer++));
+            assert(hexToWrite >= 0 && hexToWrite < 16);
+            if (config.plaintextModulus == 16) {
+                out.data[writeHead + coefficientIndex] = hexToWrite;
+            } else if (config.plaintextModulus == 256) {
+                const int nextHexToWrite = HexToolkit::hexCharToBase16(hash.at(characterPointer++));
+                out.data[writeHead + coefficientIndex] = performBitPacking(hexToWrite, nextHexToWrite);
+            }
+        }
+    }
+    const bool isHashExhausted = characterPointer == config.hashLength;
+    if (!isHashExhausted) {
+        throw std::runtime_error("Failed to encode entire hash into polynomial.");
+    }
+    return writeHead + config.coefficientsPerHash;
+}
+
+template <typename Iterator>
+void generatePackedPoly(MatPoly& out, Iterator& hashIterator, const size_t recordCount) {
+    const PlaintextConversionConfig config(out);
+    assert(config.coefficientsPerCharacter <= 1);
+    // Note: Socket is the number of coefficients required to store a single char.
+    for (size_t socketIndex = 0; socketIndex < config.hashesPerPoly; socketIndex++) {
+        const bool hashStoreExhausted = hashIterator ==
+                                        Process::Data::hashStore().get<Container::Sequence>().end();
+        if (!hashStoreExhausted) {
+            const std::string& hash = *hashIterator;
+            size_t writeHead = socketIndex * config.coefficientsPerHash;
+            writeHead = writeHashToPoly(out, config, hash, writeHead, recordCount);
+            hashIterator++;
+            if (writeHead > config.totalCoefficients) {
+                throw std::runtime_error("Write head exceeded total coefficients.");
+            }
+        } else {
+            // Note: This should ideally only happen in the very last poly.
+            const int dummyValue = 0;
+            for (size_t index = 0; index < config.coefficientsPerHash; index++) {
+                out.data[socketIndex * config.coefficientsPerHash + index] = dummyValue;
+            }
+        }
+    }
+}
+
+void load_db() {
+    Log::cout << "Database assigned to color B." << std::endl;
+    Log::cout << "Loading hashes into temporary storage." << std::endl;
+    Process::Data::loadHashes(Process::dataSpace("colorB_20.json"));
+    // Note: This is hard-coded as 256.
+    size_t dim0 = 1 << num_expansions;
+    // Note: This resolves to 128.
+    size_t num_per = total_n / dim0;
+    if (random_data) throw std::runtime_error("Random data has been deleted.");
     // Note: Size of the database (B).
+    // Note:
+    //      num_items = dim0 * num_per
+    //      trials = n0 * n2
     size_t num_bytes_B = sizeof(uint64_t) * dim0 * num_per * n0 * n2 * poly_len;//2 * poly_len;
     NativeLog::cout << "num_bytes_B: " << num_bytes_B << endl;
     B = (uint64_t *)aligned_alloc(64, num_bytes_B);
@@ -1189,91 +1445,100 @@ void load_db() {
     uint64_t *pt_buf = (uint64_t *)malloc(n0 * n0 * crt_count * poly_len * sizeof(uint64_t));
     memset(pt_buf, 0, n0 * n0 * crt_count * poly_len * sizeof(uint64_t));
 
-    if (has_file && load) {
-        // TODO
-    } else {
-        NativeLog::cout << "starting generation of db" << endl;
-        // Note: Figure out the purpose of H and F. Don't think F is used anywhere other than to calculate HF.
-        MatPoly H_nttd = to_ntt(H_mp);
-        uint64_t *H_encd = H_nttd.data;
-        MatPoly pt_tmp(n0, n0, false);
-        MatPoly pt_encd_raw(n0, n2, false);
-        pts_encd = MatPoly(n0, n2);
-        pt = MatPoly(n0, n0);
-        // Note: For index i in the database.
-        for (size_t i = 0; i < total_n; i++) {
-            // Note: has_data is false.
-            if (has_data) {
-                // TODO
-            } else {
-                if (has_data) {
-                    // TODO
-                } else {
-                    // Question: How is this polynomial randomly generated?
-                    generate_random_pt(pt_tmp);
-                }
+    NativeLog::cout << "starting generation of db" << endl;
+    // Note: Figure out the purpose of H and F. Don't think F is used anywhere other than to calculate HF.
+    MatPoly H_nttd = to_ntt(H_mp);
+    uint64_t *H_encd = H_nttd.data;
+    MatPoly pt_tmp(n0, n0, false);
+    MatPoly pt_encd_raw(n0, n2, false);
+    pts_encd = MatPoly(n0, n2);
+    pt = MatPoly(n0, n0);
+    auto hashesToLoadIterator = Process::Data::hashStore().get<Container::Sequence>().begin();
 
-                pt_encd_raw = pt_tmp;
-                // Note: For every randomly generated polynomial.
-                for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
-                    int64_t val = (int64_t) pt_encd_raw.data[pol];
-                    assert(val >= 0 && val < p_db);
-                    // Question: Ensure polynomial is valid?
-                    if (val >= (p_db / 2)) {
-                        val = val - (int64_t)p_db;
-                    }
-                    if (val < 0) {
-                        val += Q_i;
-                    }
-                    assert(val >= 0 && val < Q_i);
-                    pt_encd_raw.data[pol] = val;
-                }
-                // Note: pts_encd is a global variable that is only used in load_db.
-                to_ntt(pts_encd, pt_encd_raw);
-                // Note: If index is equal to the querying index, record it for verification.
-                if (i == IDX_TARGET) {
-                    cop(pt_encd_correct, pts_encd);
-                    cop(pt_real, pt_tmp);
-                    to_ntt(pt, pt_tmp);
-                    cop(pt_correct, pt);
-                }
+    int loadedPolyCount = 0;
+    int paddedPolynomialCount = 0;
+    int databaseRecordCount = 0;
+    // Note: For index i in the database.
+    for (size_t i = 0; i < total_n; i++) {
+        const bool hashStoreExhausted = hashesToLoadIterator ==
+                                        Process::Data::hashStore().get<Container::Sequence>().end();
+        if (!hashStoreExhausted) {
+            generatePackedPoly(pt_tmp, hashesToLoadIterator, databaseRecordCount);
+            loadedPolyCount++;
+        } else {
+            generatePaddedPoly(pt_tmp, databaseRecordCount);
+            paddedPolynomialCount++;
+        }
+        databaseRecordCount++;
+        // std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // generateRandomPt(pt_tmp);
+        pt_encd_raw = pt_tmp;
+        // Note: For every randomly generated polynomial.
+        for (size_t pol = 0; pol < n0 * n2 * poly_len; pol++) {
+            int64_t val = (int64_t) pt_encd_raw.data[pol];
+            assert(val >= 0 && val < p_db);
+            // Note: Recenter mod.
+            //      p_db = small_modulus
+            //      Q_i  = large_modulus
+            if (val >= (p_db / 2)) {
+                val = val - (int64_t)p_db;
             }
-
-            // b': i c n z j m
-            size_t ii = i % num_per;  // Note: num_per is 128.
-            size_t j = i / num_per;
-            for (size_t m = 0; m < n0; m++) {
-                for (size_t c = 0; c < n2; c++) {
-                    if (has_data) {
-                        // TODO
-                    } else {
-                        // Question: What is the coeff_count and how does that correspond to poly_len. They both are 2048.
-                        // Note: pts_encd is a temporary store for an NTT-compliant random polynomial.
-                        // Debug: crt_count is 2.
-                        // Question: What is it indexing?
-                        memcpy(BB, &pts_encd.data[(m * n2 + c) * crt_count * coeff_count], crt_count * coeff_count * sizeof(uint64_t));
-                        // Note: For the poly_len.
-                        for (size_t z = 0; z < poly_len; z++) {
-                            size_t idx = z * (num_per * n2 * dim0 * n0) +
-                                         ii * (n2 * dim0 * n0) +
-                                         c * (dim0 * n0) +
-                                         j * (n0) + m;
-                            // Note: Packs two 32 bit integers
-                            //       (BB[z] and (BB[poly_len + z] << 32))
-                            //       into one 64 bit integer (B[idx]).
-                            B[idx] = BB[z] | (BB[poly_len + z] << 32);
-                        }
-                    }
-                }
+            if (val < 0) {
+                val += Q_i;
             }
+            assert(val >= 0 && val < Q_i);
+            pt_encd_raw.data[pol] = val;
+        }
+        // Note: pts_encd is a global variable that is only used in load_db.
+        to_ntt(pts_encd, pt_encd_raw);
+        // Note: If index is equal to the querying index, record it for verification.
+        if (i == IDX_TARGET) {
+            cop(pt_encd_correct, pts_encd);
+            cop(pt_real, pt_tmp);
+            to_ntt(pt, pt_tmp);
+            cop(pt_correct, pt);
         }
 
-        if (has_file && !load) {
-            // TODO
+        // b': i c n z j m
+        size_t ii = i % num_per;  // Note: num_per is 128.
+        size_t j = i / num_per;
+        for (size_t m = 0; m < n0; m++) {
+            for (size_t c = 0; c < n2; c++) {
+                // Question: What is the coeff_count and how does that correspond to poly_len. They both are 2048.
+                // Note: pts_encd is a temporary store for an NTT-compliant random polynomial.
+                // Debug: crt_count is 2.
+                // Question: What is it indexing?
+                memcpy(BB, &pts_encd.data[(m * n2 + c) * crt_count * coeff_count], crt_count * coeff_count * sizeof(uint64_t));
+                // Note: For the poly_len.
+                for (size_t z = 0; z < poly_len; z++) {
+                    size_t idx = z * (num_per * n2 * dim0 * n0) +
+                                 ii * (n2 * dim0 * n0) +
+                                 c * (dim0 * n0) +
+                                 j * (n0) + m;
+                    // Note: Packs two 32 bit integers
+                    //       (BB[z] and (BB[poly_len + z] << 32))
+                    //       into one 64 bit integer (B[idx]).
+                    B[idx] = BB[z] | (BB[poly_len + z] << 32);
+                }
+            }
         }
     }
-
+    std::cout << std::endl;  // For carriage return.
     free(BB);
+
+    Log::cout << "Database N is " << total_n << "." << std::endl;
+    Log::cout << "Encoded " << Process::Data::hashStore().size()
+              << " hashes into " << loadedPolyCount << " polys and padded "
+              << paddedPolynomialCount << " polynomials." << std::endl;
+
+    if (hashesToLoadIterator != Process::Data::hashStore().get<Container::Sequence>().end()) {
+        // throw std::runtime_error(
+        //     "Failed to load all hashes into the database. "
+        //     "Is the database too small?"
+        // );
+        std::cerr << "Failed to load all hashes into the database. "
+                 << "Is the database too small?" << std::endl;
+    }
 
     if (has_file) {
         fs.close();
@@ -1284,59 +1549,28 @@ void load_db() {
 
 void do_test();
 void do_server();
-void runSeperationTest();
+void runSeparationTest();
+void performPreTests();
 
 #ifdef MAKE_QUERY
 void make_query();
 #endif
 
 void do_MatPol_test() {
-    MatPoly A_mp(3, 6, false); //= to_MatPoly(A);
+    MatPoly A_mp(3, 6, false);
     uniform_matrix(A_mp);
     MatPoly A_mp_ntt(3, 6);
-    // cout << "to_ntt..." << endl;
     to_ntt(A_mp_ntt, A_mp);
-
     MatPoly A_mp_back(3, 6, false);
-    // cout << "from_ntt..." << endl;
     from_ntt(A_mp_back, A_mp_ntt);
-
-    // MatPoly a(1, 1, false);
-    // MatPoly b(1, 1, false);
-    // MatPoly res_slow(1, 1, false);
-    // MatPoly res_fast(1, 1, false);
-    // a.data[5] = 7;
-    // b.data[5] = 7;
-    // b.data[2047] = 1;
-    // a.data[poly_len] = 7;
-    // a.data[2*poly_len] = 17;
-    // a.data[3*poly_len+8] = 17;
-    // a.data[4*poly_len] = 17;
-    // b.data[0] = 7;
-    // uniform_matrix(a);
-    // uniform_matrix(b);
-    // res_slow = slow_matmul_mod_arbitrary(a, b, Q_i_u128);
-    // res_fast = from_ntt(multiply(a, b));
-
-    // for (size_t i = 0; i < res_fast.rows*res_fast.cols*poly_len; i++) {
-    //     cout << res_fast.data[i] << "," << res_slow.data[i] << " " <<  endl;
-    // }
-    // cout << endl;
-
-    // cout << "from_MatPoly..." << endl;
-    // Mat<ZZ_pX> A_back = from_MatPoly(A_mp_back);
-
-    bool worked = is_eq(A_mp, A_mp_back);// && is_eq(res_slow, res_fast);
-
+    bool worked = is_eq(A_mp, A_mp_back);
     if (!worked) {
         cout << "do_MatPol_test failed" << endl;
         exit(1);
     }
-    // cout << "do_MatPol_test worked." << endl;
 }
 
 void testScalToMatAndConversion();
-
 #ifdef TIMERLOG
 namespace GlobalTimer {
     inline std::map<std::string, std::chrono::time_point<std::chrono::high_resolution_clock>> activeTimers {};
@@ -1370,6 +1604,7 @@ namespace GlobalTimer {
 };
 #endif
 
+bool DEFER_DATABASE_CREATION = false;
 
 int main(int argc, char *argv[]) {
     #ifndef __EMSCRIPTEN__
@@ -1483,14 +1718,17 @@ int main(int argc, char *argv[]) {
         exit(0);
     }
 
-    GlobalTimer::set("Database Generation");
-    load_db();
-    GlobalTimer::stop("Database Generation");
+    performPreTests();
+    if (!DEFER_DATABASE_CREATION) {
+        GlobalTimer::set("Database Generation");
+        load_db();
+        GlobalTimer::stop("Database Generation");
+    }
 
     // do_test();
     // setup_main();
     GlobalTimer::set("Run Separation Test");
-    runSeperationTest();
+    runSeparationTest();
     GlobalTimer::stop("Run Separation Test");
     #endif
 }
@@ -3443,7 +3681,11 @@ void answer_main() {
     assert(areFDLEqual(furtherDimsLocals, furtherDimsLocals_Load));
 }
 
-void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
+void extract_main(
+    const MatPoly& S_Extract,
+    const MatPoly& Sp_Extract,
+    const size_t queryIndex
+) {
     // Load server response.
     GlobalTimer::set("Load server response");
     size_t dim0 = 1 << num_expansions;
@@ -3503,26 +3745,98 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     }
     M_result = s_prod;  // M.
     GlobalTimer::stop("Perform C <- Decode(Z) operation to get the encoded message");
-    // Check for correctness.
-    MatPoly corr = pt_real;
-    std::cout << "[" << UnixColours::MAGENTA << "Check"
-              << UnixColours::RESET << "] Message is " << UnixColours::MAGENTA
-              << (is_eq(corr, M_result) ? "correct." : "incorrect.")
-              << UnixColours::RESET << std::endl;
-    bool showMessages = false;
-    if (showMessages) {
-        Log::cout << "Decoded message: ";
-        for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
-            Log::cout << M_result.data[i] << ",";
+
+
+
+    const PlaintextConversionConfig config(M_result);
+    std::stringstream decodedMessageStream;
+    const size_t recordIndex = IDX_TARGET;
+    const size_t readHeadOffset = queryIndex - (config.hashesPerPoly * recordIndex);
+    const size_t readHeadStart = config.coefficientsPerHash * readHeadOffset;
+    const size_t databaseCapacity = config.hashesPerPoly * total_n;
+    const size_t readHeadEnd = readHeadStart + config.coefficientsPerHash;
+    assert(readHeadEnd < databaseCapacity);
+    for (size_t readHead = readHeadStart; readHead < readHeadEnd; readHead++) {
+        if (config.coefficientsPerCharacter == 1) {
+            decodedMessageStream << HexToolkit::base16ToHex[M_result.data[readHead]];
+        } else if (config.coefficientsPerCharacter < 1) {
+            assert(config.plaintextModulus == 256);
+            auto [char1, char2] = unpackBit(M_result.data[readHead]);
+            decodedMessageStream << HexToolkit::base16ToHex[char1] << HexToolkit::base16ToHex[char2];
         }
-        Log::cout << std::endl;
-        Log::cout << "Actual message: ";
-        for (size_t i = 0; i < corr.rows * corr.cols * coeff_count; i++) {
-            Log::cout << corr.data[i] << ",";
-        }
-        Log::cout << std::endl;
     }
+
+    // const size_t hashLength = 64;
+    // const size_t coefficientRange = p_db;
+    // const size_t hexCharacterCount = 16;
+    // assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
+    // assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
+    // size_t characterWriteSpace = hexCharacterCount / coefficientRange;
+    // if (coefficientRange < hexCharacterCount) {
+    //     characterWriteSpace += 1;
+    // }
+    // if (characterWriteSpace == 0) {
+    //     characterWriteSpace = 1;
+    // }
+    //
+    // size_t plaintextEncodingLength = M_result.rows * M_result.cols * coeff_count;
+    // size_t messageEncodedLength = characterWriteSpace * hashLength;
+    // assert(messageEncodedLength < plaintextEncodingLength);
+    //
+    //
+    // std::stringstream decodedMessageStream;
+    // if (characterWriteSpace == 1) {
+    //     for (size_t i = 0; i < messageEncodedLength; i++) {
+    //         decodedMessageStream << HexToolkit::base16ToHex[M_result.data[i]];
+    //     }
+    // } else {
+    //     for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
+    //         size_t base16Sum = 0;
+    //         for (size_t j = 0; j < characterWriteSpace; j++) {
+    //             base16Sum += M_result.data[i + j];
+    //         }
+    //         decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
+    //     }
+    // }
+
+    bool showMessages = true;
+    if (showMessages) {
+        Log::cout << "Message dump: \n" << std::endl;
+        bool allZeros = true;
+        for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
+            if (M_result.data[i] != 0) {
+                allZeros = false;
+            }
+            if (i >= readHeadStart && i < readHeadEnd) {
+                std::cout << UnixColours::GREEN;
+            }
+            if (i == readHeadEnd) {
+                std::cout << UnixColours::RESET;
+            }
+            std::cout << M_result.data[i] << ",";
+        }
+        std::cout << std::endl << std::endl;
+        Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
+    }
+    Log::cout << "Decoded hash: " << UnixColours::MAGENTA
+              << decodedMessageStream.str() << UnixColours::RESET
+              << std::endl;
+    // Validate hash.
+    const bool hashExistsInFile =
+            Process::Data::hashStore().get<Container::Hash>().find(decodedMessageStream.str()) !=
+            Process::Data::hashStore().end();
+    std::cout << "[" << UnixColours::MAGENTA << "Check"
+              << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
+              << (hashExistsInFile ? "valid." : "invalid.")
+              << UnixColours::RESET << std::endl;
+    const bool hashIsPositionedCorrectly =
+            Process::Data::retrieveHashAtIndex(queryIndex) == decodedMessageStream.str();
+    std::cout << "[" << UnixColours::MAGENTA << "Check"
+              << UnixColours::RESET << "] Hash is positioned " << UnixColours::MAGENTA
+              << (hashExistsInFile ? "correctly." : "incorrectly.")
+              << UnixColours::RESET << std::endl;
     // If any, show differences between encoded message and actual.
+    MatPoly corr = pt_real;
     if (show_diff) {
         for (size_t i = 0; i < M_result.rows * M_result.cols * coeff_count; i++) {
             if (corr.data[i] != M_result.data[i]) {
@@ -3552,19 +3866,76 @@ void extract_main(const MatPoly& S_Extract, const MatPoly& Sp_Extract) {
     }
 }
 
-void runSeperationTest() {
-//    do_test(); exit(0);
+size_t retrieveRecordIndex(const size_t queryIndex) {
+    const PlaintextConversionConfig config(2);
+    const size_t databaseRecordCount = total_n;
+    const size_t hashesPerRecord = config.hashesPerPoly;
+    const size_t recordIndex = queryIndex / hashesPerRecord;
+    assert(recordIndex < databaseRecordCount);
+    return recordIndex;
+}
+
+
+void processExitStrategy(int signal) {
+    Log::cout << "Received signal " << signal
+              << ". Exiting process." << std::endl;
+    free(B);
+    exit(signal);
+}
+
+void runSeparationTest() {
+    std::signal(SIGINT, processExitStrategy);
+    std::signal(SIGTERM, processExitStrategy);
+    Log::cout << "Plaintext modulus is " << p_db
+              << ", which allows for \"" << log2(p_db) / 4
+              << "\" 4-bit character(s) in every coefficient." << std::endl;
     MatPoly S_Main, Sp_Main, sr_Query;
     GlobalTimer::set("Fig.2: Setup");
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
-    GlobalTimer::set("Fig.2: Query");
-    query_main(S_Main, Sp_Main, sr_Query);
-    GlobalTimer::stop("Fig.2: Query");
-    GlobalTimer::set("Fig.2: Answer");
-    answer_main();
-    GlobalTimer::stop("Fig.2: Answer");
-    GlobalTimer::set("Fig.2: Extract");
-    extract_main(S_Main, Sp_Main);
-    GlobalTimer::stop("Fig.2: Extract");
+    size_t queryIndex {};
+    while (true) {
+        std::cout << "[" << UnixColours::CYAN << "Input"
+                  << UnixColours::RESET << "] " << "Enter query index: " << std::flush;
+        std::cin >> queryIndex;
+        IDX_TARGET = retrieveRecordIndex(queryIndex);
+        IDX_DIM0 = IDX_TARGET / (1 << further_dims);
+        GlobalTimer::set("Fig.2: Query");
+        query_main(S_Main, Sp_Main, sr_Query);
+        GlobalTimer::stop("Fig.2: Query");
+        GlobalTimer::set("Fig.2: Answer");
+        answer_main();
+        GlobalTimer::stop("Fig.2: Answer");
+        GlobalTimer::set("Fig.2: Extract");
+        extract_main(S_Main, Sp_Main, queryIndex);
+        GlobalTimer::stop("Fig.2: Extract");
+    }
+}
+
+void populateConfiguration() {
+    for (int database_size = 30; database_size <= 40; database_size++) {
+        Log::cout << "Generating configuration for " << database_size << "." << std::endl;
+        const std::string command = "python3 ./../../Seperated/select_params.py " +
+                                    std::to_string(database_size) + " 32 --explicit-db > /dev/null";
+        system(command.c_str());
+    }
+}
+
+void performPreTests() {
+    DEFER_DATABASE_CREATION = false;
+
+    // uint8_t value1 = HexToolkit::hexCharToBase16('f');
+    // uint8_t value2 = HexToolkit::hexCharToBase16('f');
+    //
+    // uint64_t packedValue = (value1 << 4) | value2;
+    //
+    // std::cout << "Packed value: " << packedValue << std::endl;
+    //
+    // uint8_t unpackedValue1 = (packedValue >> 4) & 0x0F;
+    // uint8_t unpackedValue2 = packedValue & 0x0F;
+    //
+    // std::cout << "Unpacked value 1: " << static_cast<int>(unpackedValue1) << std::endl;
+    // std::cout << "Unpacked value 2: " << static_cast<int>(unpackedValue2) << std::endl;
+    //
+    // exit(0);
 }

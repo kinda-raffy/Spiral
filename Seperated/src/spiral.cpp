@@ -1115,6 +1115,7 @@ enum Container{
 
 namespace Process {
     const std::filesystem::path processPath("../../Database_Data");
+    const std::filesystem::path queryStoragePath("../../Query_Storage");
 
     std::filesystem::path dataSpace(const std::string& filename) {
         return processPath / std::filesystem::path(filename);
@@ -1718,7 +1719,6 @@ int main(int argc, char *argv[]) {
         exit(0);
     }
 
-    performPreTests();
     if (!DEFER_DATABASE_CREATION) {
         GlobalTimer::set("Database Generation");
         load_db();
@@ -3883,6 +3883,35 @@ void processExitStrategy(int signal) {
     exit(signal);
 }
 
+void parseQueryFile(const std::filesystem::path& filePath, std::vector<int>& numbers) {
+    std::ifstream file(filePath);
+    std::string line;
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open file: " + filePath.string());
+    }
+    while (getline(file, line)) {
+        std::istringstream iss(line);
+        int number;
+        char comma;
+        if (iss >> number >> comma) {
+            numbers.push_back(number);
+        }
+    }
+}
+
+std::vector<int> loadQueryDirectory(const std::string& queryDirectory) {
+    std::vector<int> result;
+    for (const auto& entry : std::filesystem::directory_iterator(queryDirectory)) {
+        if (!entry.is_regular_file()) continue;
+
+        const auto& path = entry.path();
+        if (path.extension() == ".query") {
+            parseQueryFile(path, result);
+        }
+    }
+    return result;
+}
+
 void runSeparationTest() {
     std::signal(SIGINT, processExitStrategy);
     std::signal(SIGTERM, processExitStrategy);
@@ -3893,12 +3922,29 @@ void runSeparationTest() {
     GlobalTimer::set("Fig.2: Setup");
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
-    size_t queryIndex {};
-    while (true) {
+//    size_t queryIndex {};
+//    while (true) {
+//        std::cout << "[" << UnixColours::CYAN << "Input"
+//                  << UnixColours::RESET << "] " << "Enter query index: " << std::flush;
+//        std::cin >> queryIndex;
+//        IDX_TARGET = retrieveRecordIndex(queryIndex);
+//        IDX_DIM0 = IDX_TARGET / (1 << further_dims);
+//        GlobalTimer::set("Fig.2: Query");
+//        query_main(S_Main, Sp_Main, sr_Query);
+//        GlobalTimer::stop("Fig.2: Query");
+//        GlobalTimer::set("Fig.2: Answer");
+//        answer_main();
+//        GlobalTimer::stop("Fig.2: Answer");
+//        GlobalTimer::set("Fig.2: Extract");
+//        extract_main(S_Main, Sp_Main, queryIndex);
+//        GlobalTimer::stop("Fig.2: Extract");
+//    }
+    std::vector<int> queryIndexes = loadQueryDirectory(Process::queryStoragePath);
+
+    for (int index : queryIndexes) {
         std::cout << "[" << UnixColours::CYAN << "Input"
-                  << UnixColours::RESET << "] " << "Enter query index: " << std::flush;
-        std::cin >> queryIndex;
-        IDX_TARGET = retrieveRecordIndex(queryIndex);
+                  << UnixColours::RESET << "] " << "Using query index: " << index << std::endl;
+        IDX_TARGET = retrieveRecordIndex(index);
         IDX_DIM0 = IDX_TARGET / (1 << further_dims);
         GlobalTimer::set("Fig.2: Query");
         query_main(S_Main, Sp_Main, sr_Query);
@@ -3907,7 +3953,7 @@ void runSeparationTest() {
         answer_main();
         GlobalTimer::stop("Fig.2: Answer");
         GlobalTimer::set("Fig.2: Extract");
-        extract_main(S_Main, Sp_Main, queryIndex);
+        extract_main(S_Main, Sp_Main, index);
         GlobalTimer::stop("Fig.2: Extract");
     }
 }
@@ -3919,23 +3965,4 @@ void populateConfiguration() {
                                     std::to_string(database_size) + " 32 --explicit-db > /dev/null";
         system(command.c_str());
     }
-}
-
-void performPreTests() {
-    DEFER_DATABASE_CREATION = false;
-
-    // uint8_t value1 = HexToolkit::hexCharToBase16('f');
-    // uint8_t value2 = HexToolkit::hexCharToBase16('f');
-    //
-    // uint64_t packedValue = (value1 << 4) | value2;
-    //
-    // std::cout << "Packed value: " << packedValue << std::endl;
-    //
-    // uint8_t unpackedValue1 = (packedValue >> 4) & 0x0F;
-    // uint8_t unpackedValue2 = packedValue & 0x0F;
-    //
-    // std::cout << "Unpacked value 1: " << static_cast<int>(unpackedValue1) << std::endl;
-    // std::cout << "Unpacked value 2: " << static_cast<int>(unpackedValue2) << std::endl;
-    //
-    // exit(0);
 }

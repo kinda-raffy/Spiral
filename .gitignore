@@ -9,6 +9,7 @@ venv*/
 **/.venv*/
 Process_Workspace/*.bin
 bin/
+*.bin
 *.db
 *.nsight*
 *.mkv

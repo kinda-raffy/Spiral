@@ -398,15 +398,15 @@ def run_spiral_trials() -> None:
         for q in [2, 16, 128, 256]:
             h = calculate_height(q, n)
             N = derive_total_database_size(q, h)
-            N_exponent = math.ceil(math.log(N, 2))
-            if N_exponent > 30:
+            N_power = math.ceil(math.log(N, 2))
+            if N_power > 30:
                 print("Unsupported database size.")
                 continue
             print(
                 "\n\n------------------------------------------------------------",
-                f"Running database size: 2^{N_exponent} with Q={q} and n={n}."
+                f"Running database size: 2^{N_power} with Q={q} and n={n}."
             )
-            trial_configuration_label: str = f"{N_exponent}_{element_size}"
+            trial_configuration_label: str = f"{N_power}_{element_size}"
             parameter_set, program_arguments \
                 = parse_database_configuration(trial_configuration_label)
             cmake_configuration = CMakeConfiguration(

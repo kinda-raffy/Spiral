@@ -65,6 +65,7 @@ using namespace nfl;
 size_t num_expansions = 2; // max = 7 // used to be 8
 size_t further_dims = 2;
 size_t total_n = (1 << num_expansions) * (1 << further_dims);
+std::string DATA_FILENAME = std::string();
 
 constexpr size_t mh = m_exp;
 static_assert(m2 % logQ != 0, "m2 dimension cannot evenly divide logQ");

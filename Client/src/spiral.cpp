@@ -302,7 +302,7 @@ void generate_gadgets() {
     buildGadget(G_hat);
 }
 
-void runSeparationTest();
+void runClient();
 
 void do_MatPol_test() {
     MatPoly A_mp(3, 6, false);
@@ -577,7 +577,7 @@ int main(int argc, char *argv[]) {
     }
 
     GlobalTimer::set("Running Client");
-    runSeparationTest();
+    runClient();
     GlobalTimer::stop("Running Client");
     #endif
 }
@@ -979,7 +979,7 @@ void decodeBucketedRecord(const MatPoly& decodedMessage) {
               << UnixColours::RESET << std::endl;
 }
 
-void decodePackedPoly(MatPoly& decodedMessage, const size_t queryIndex) {
+void decodePoly(MatPoly& decodedMessage, const size_t queryIndex) {
     const PlaintextConversionConfig config(decodedMessage);
     std::stringstream decodedMessageStream;
     const size_t recordIndex = IDX_TARGET;
@@ -1112,7 +1112,7 @@ void extract_main(
     if (p_db == 4) {
         decodeBucketedRecord(M_result);
     } else {
-        decodePackedPoly(M_result, queryIndex);
+        decodePoly(M_result, queryIndex);
     }
 }
 
@@ -1139,7 +1139,7 @@ void clientExitStrategy(int signal) {
     exit(signal);
 }
 
-void runSeparationTest() {
+void runClient() {
     std::signal(SIGINT, clientExitStrategy);
     std::signal(SIGTERM, clientExitStrategy);
     Log::cout << "Using " << DATA_FILENAME << " for verification." << std::endl;

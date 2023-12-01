@@ -986,7 +986,7 @@ namespace Process {
             return hashes;
         }
 
-        void loadHashes(const std::filesystem::path& jsonFile) {
+        void useSIMDParser(const std::filesystem::path& jsonFile) {
             simdjson::ondemand::parser simdParser;
             auto jsonHash = simdjson::padded_string::load(jsonFile.c_str());
             auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
@@ -997,6 +997,31 @@ namespace Process {
                             static_cast<std::string_view>(hash.get_string())
                     );
                 }
+            }
+        }
+
+        void useInsertionPreservedParser(const std::filesystem::path& jsonFile) {
+            std::ifstream jsonFileStream(jsonFile);
+            nlohmann::ordered_json jsonData;
+            jsonFileStream >> jsonData;
+            auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
+            for (auto& element : jsonData[0].items()) {
+                hashStoreRef.get<Container::Sequence>().push_back(element.value().get<string>());
+            }
+        }
+
+        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = false) {
+            // [Note] Preserving insertion order tends to be notably
+            //        slower on large files, which may not be ideal
+            //        for development. Insertion order is only a requisite
+            //        for the final architecture integration.
+            Log::cout << "Hashes to be loaded in "
+                      << (insertionOrderLoad ? "insertion" : "non-insertion")
+                      << " order." << std::endl;
+            if (insertionOrderLoad) {
+                useInsertionPreservedParser(jsonFile);
+            } else {
+                useSIMDParser(jsonFile);
             }
         }
 
@@ -1392,7 +1417,7 @@ void load_db() {
     NativeLog::cout << "done loading/generating db." << endl;
 }
 
-void runSeparationTest();
+void runServer();
 
 #ifdef MAKE_QUERY
 void make_query();
@@ -1512,7 +1537,7 @@ int main(int argc, char *argv[]) {
         exit(0);
     }
     GlobalTimer::set("Running Server");
-    runSeparationTest();
+    runServer();
     GlobalTimer::stop("Running Server");
     #endif
 }
@@ -2249,7 +2274,7 @@ void processExitStrategy(int signal) {
     exit(signal);
 }
 
-void runSeparationTest() {
+void runServer() {
     std::signal(SIGINT, processExitStrategy);
     std::signal(SIGTERM, processExitStrategy);
     Log::cout << "Database assigned to " << DATA_FILENAME << "." << std::endl;

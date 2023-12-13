@@ -1,0 +1,30 @@
+colorA_2_16.json; NodeID: 247; Index: 110
+colorB_2_16.json; NodeID: 16; Index: 7
+
+colorA_2_16.json; NodeID: 266; Index: 129
+colorB_2_16.json; NodeID: 17; Index: 8
+
+colorA_2_16.json; NodeID: 9; Index: 8
+colorB_2_16.json; NodeID: 142; Index: 133
+
+colorA_2_16.json; NodeID: 6; Index: 5
+colorB_2_16.json; NodeID: 95; Index: 86
+
+colorA_2_16.json; NodeID: 151; Index: 14
+colorB_2_16.json; NodeID: 10; Index: 1
+
+colorA_2_16.json; NodeID: 185; Index: 48
+colorB_2_16.json; NodeID: 12; Index: 3
+
+colorA_2_16.json; NodeID: 4; Index: 3
+colorB_2_16.json; NodeID: 60; Index: 51
+
+colorA_2_16.json; NodeID: 240; Index: 103
+colorB_2_16.json; NodeID: 15; Index: 6
+
+colorA_2_16.json; NodeID: 9; Index: 8
+colorB_2_16.json; NodeID: 139; Index: 130
+
+colorA_2_16.json; NodeID: 178; Index: 41
+colorB_2_16.json; NodeID: 12; Index: 3
+

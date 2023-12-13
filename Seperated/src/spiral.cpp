@@ -1114,10 +1114,10 @@ enum Container{
 };
 
 namespace Process {
-    // const std::filesystem::path base("../../");
+    // [DEBUG] const std::filesystem::path base("../../");
     const std::filesystem::path base("/tmp/Spiral");
     const std::filesystem::path processPath
-        = base / std::filesystem::path("Database_Data");
+        = base / std::filesystem::path("Database/Evaluation/Data");
     const std::filesystem::path queryStoragePath
         = base / std::filesystem::path("Query_Storage");
 
@@ -1163,11 +1163,16 @@ namespace Process {
             jsonFileStream >> jsonData;
             auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
             for (auto& element : jsonData[0].items()) {
-                hashStoreRef.get<Container::Sequence>().push_back(element.value().get<string>());
+                std::string hash = element.value().get<std::string>();
+                std::transform(
+                    hash.begin(), hash.end(), hash.begin(),
+                    [](unsigned char c){ return std::tolower(c); }
+                );
+                hashStoreRef.get<Container::Sequence>().push_back(hash);
             }
         }
 
-        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = true) {
+        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = false) {
             // [Note] Preserving insertion order tends to be notably
             //        slower on large files, which may not be ideal
             //        for development. Insertion order is only a requisite
@@ -1571,11 +1576,11 @@ namespace GlobalTimer {
 
 
 namespace Evaluation {
-    std::map<std::string, double> metrics {};
+    std::map<std::string, std::vector<double>> metrics {};
     const std::filesystem::path metricsPath("/tmp/Spiral/Evaluation/Data");
 
     void set(const std::string& metric, const double value) {
-        metrics.emplace(metric, value);
+        metrics[metric].push_back(value);
     }
 
     inline namespace Timers {
@@ -1591,7 +1596,7 @@ namespace Evaluation {
             auto start = activeTimers[timerName];
             auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-            metrics.emplace(timerName, static_cast<double>(duration));
+            metrics[timerName].push_back(static_cast<double>(duration));
             activeTimers.erase(timerName);
         }
     }
@@ -1622,15 +1627,18 @@ namespace Evaluation {
     }
 
     void saveStaticMetrics() {
-        metrics.emplace("Rate.client", Calculate::rate());
-        metrics.emplace("Query_Cost.communication", Calculate::queryCost());
-        metrics.emplace("Response_Cost.communication", Calculate::responseCost());
-        metrics.emplace("Total_Cost.communication", Calculate::totalCost());
+        metrics["Rate.client"].push_back(Calculate::rate());
+        metrics["Query_Cost.communication"].push_back(Calculate::queryCost());
+        metrics["Response_Cost.communication"].push_back(Calculate::responseCost());
+        metrics["Total_Cost.communication"].push_back(Calculate::totalCost());
     }
 
     void writeMetrics() {
         saveStaticMetrics();
         assert(!metrics.empty());
+        for (const auto& [metricName, metricValues] : metrics) {
+            assert(!metricValues.empty());
+        }
         if (!std::filesystem::exists(metricsPath)) {
             std::filesystem::create_directory(metricsPath);
         }
@@ -1638,9 +1646,14 @@ namespace Evaluation {
             std::string command = "rm -rf " + metricsPath.string() + "/*";
             system(command.c_str());
         }
-        for (const auto& [metricName, value] : metrics) {
+        for (const auto& [metricName, metricValues] : metrics) {
             std::ofstream metricFileStream(metricsPath / std::filesystem::path(metricName));
-            metricFileStream << value;
+            for (const auto& value : metricValues) {
+                metricFileStream << value << " ";
+            }
+            double min = *std::min_element(metricValues.begin(), metricValues.end());
+            double max = *std::max_element(metricValues.begin(), metricValues.end());
+            metricFileStream << "\n" << min << "\n" << max;
         }
         std::ofstream metaFileStream(metricsPath / std::filesystem::path("Meta"));
         metaFileStream << DATA_FILENAME << std::endl;
@@ -3748,7 +3761,7 @@ void decodePoly(MatPoly& decodedMessage, const size_t queryIndex) {
             readHead += static_cast<size_t>(config.coefficientsPerCharacter) - 1;
         }
     }
-    bool showMessages = true;
+    bool showMessages = false;
     if (showMessages) {
         Log::cout << "Message dump: \n" << std::endl;
         bool allZeros = true;
@@ -3923,6 +3936,11 @@ void runSeparationTest() {
     for (int index : queryIndexes) {
         std::cout << "[" << UnixColours::CYAN << "Input"
                   << UnixColours::RESET << "] " << "Using query index: " << index << std::endl;
+        const size_t loadedHashCount = Process::Data::hashStore().get<Container::Sequence>().size();
+        if (index < 0 or index >= loadedHashCount) {
+            std::cerr << "Query index is out of bounds." << std::endl;
+            continue;
+        }
         IDX_TARGET = retrieveRecordIndex(index);
         IDX_DIM0 = IDX_TARGET / (1 << further_dims);
         GlobalTimer::set("Fig.2: Query");
@@ -3934,11 +3952,12 @@ void runSeparationTest() {
         GlobalTimer::set("Fig.2: Extract");
         extract_main(S_Main, Sp_Main, index);
         GlobalTimer::stop("Fig.2: Extract");
+        system("clear");
     }
     Evaluation::writeMetrics();
 }
 
-void populateConfiguration() {
+void populateConfigurations() {
     for (int database_size = 30; database_size <= 40; database_size++) {
         Log::cout << "Generating configuration for " << database_size << "." << std::endl;
         const std::string command = "python3 ./../../Seperated/select_params.py " +

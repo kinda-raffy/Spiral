@@ -4,8 +4,12 @@ import os
 import abc
 import math
 import enum
+import sys
 import typing
+import statistics
 import dataclasses
+
+import matplotlib.font_manager
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -41,22 +45,28 @@ class CMakeConfiguration:
         )
 
 
+class SpiralTarget(str, enum.Enum):
+    SEPERATED = "Seperated"
+    SERVER = "Server"
+    CLIENT = "Client"
+
+
 @dataclasses.dataclass
 class CMakeBuild:
     parameter_set: str
     build_path: str
-    target: typing.Literal["Seperated", "Server", "Client"]
-    core_count: int = 4
+    target: SpiralTarget
+    core_count: int = 126
     verbose: bool = True
 
     def __str__(self) -> str:
         return (
-            f"cmake "
-            f"--build {self.build_path} "
-            f"--target {self.target} "
-            + (f"-v " if self.verbose else "") +
-            f"-j{self.core_count} "
-            f"-- PARAMSET=PARAMS_DYNAMIC {self.parameter_set}"
+                f"cmake "
+                f"--build {self.build_path} "
+                f"--target {self.target} "
+                + (f"-v " if self.verbose else "") +
+                f"-j{self.core_count} "
+                f"-- PARAMSET=PARAMS_DYNAMIC {self.parameter_set}"
         )
 
 
@@ -64,10 +74,11 @@ class CMakeBuild:
 class CMakeRun:
     cmake_configuration: CMakeConfiguration
     cmake_build: CMakeBuild
-    executable: typing.Literal["Seperated", "Server", "Client"]
+    executable: SpiralTarget
     database_file: str
     further_dimensions: int
     folding_factor: int
+    perform_build: bool = True
 
     @property
     def build_path(self) -> str:
@@ -84,20 +95,22 @@ class CMakeRun:
         )
 
     def generate_command(self) -> str:
-        return (
-            f"{self.cmake_configuration} && "
-            f"{self.cmake_build} && "
+        executable_command: str = (
             f"{self.executable_path()} "
             f"{self.further_dimensions} {self.folding_factor} "
             f"{self.database_file}"
         )
+        return (
+            f"{self.cmake_configuration} && "
+            f"{self.cmake_build} && "
+            f"{executable_command}"
+        ) if self.perform_build else executable_command
 
-    def run(self) -> None:
-        os.system(self.generate_command())
+    def run(self) -> int:
+        return os.system(self.generate_command())
 
 
-class Evaluation:
-
+class Evaluate:
     def __init__(self) -> None:
         metric_file_to_table_map: dict[str, typing.Type[EvaluationTable]] = {
             "Query_Generation.client": QueryGenerationTable,
@@ -116,6 +129,94 @@ class Evaluation:
             _evaluation_table_map[metric_file] = table_type()
         self.evaluation_table_map = _evaluation_table_map
         self.data_path: str = os.fspath("./Data")
+        self.average_metrics: dict[
+            typing.Type[EvaluationTable], list[float]] = {
+            table: list() for table in metric_file_to_table_map.values()
+        }
+        self.min_metrics: dict[
+            typing.Type[EvaluationTable], list[float]] = {
+            table: list() for table in metric_file_to_table_map.values()
+        }
+        self.max_metrics: dict[
+            typing.Type[EvaluationTable], list[float]] = {
+            table: list() for table in metric_file_to_table_map.values()
+        }
+
+    def flip_record_average_switch(self) -> None:
+        self.refresh_average_table()
+
+    def read_metric_files(self) -> dict[str, list[list[float]]]:
+        """
+        :return: {
+            metric_filename: [
+                [floats...], -> All values (for average)
+                [floats...], -> Min
+                [floats...], -> Max
+            ],
+        """
+        filename_to_content_map = dict()
+        for filename in os.listdir(self.data_path):
+            if filename == "Meta":
+                continue
+            filepath = os.path.join(self.data_path, filename)
+            if os.path.isfile(filepath):
+                with open(filepath, "r") as file:
+                    filename_to_content_map[filename] = file.readlines()
+        return {
+            filename: [
+                [float(value) for value in line.split()]
+                for line in content
+            ]
+            for filename, content in filename_to_content_map.items()
+        }
+
+    def run(self, n_power: int, q: int, exit_code: int) -> None:
+        assert n_power in range(10, 31), f"{n_power=} not in range of n."
+        n_column_index = range(10, 31).index(n_power)
+        q_row_index = [2, 16, 128, 256].index(q)
+        print(f"==> Evaluating {n_power=} and {q=}.")
+        for metric_name, metric_packet in self.read_metric_files().items():
+            print(f"===> Evaluating {metric_name} {metric_packet}.")
+            table = self.evaluation_table_map[metric_name]
+            metric_data_sources = zip([
+                table.average_data,
+                table.min_data,
+                table.max_data
+            ], metric_packet)
+            assert len(metric_packet) == 3, \
+                f"Value must be Average, Min, Max. Received {len(metric_packet)=}."
+            for data_source, data_source_values in metric_data_sources:
+                table_value = self.determine_metric_value(data_source, table, data_source_values)
+                if exit_code != 0:
+                    data_source[n_column_index][q_row_index] = f"Code: {exit_code}"
+                else:
+                    data_source[n_column_index][q_row_index] = f"{table_value:.3f}"
+            table.render(show=True)
+            table.write_latex_table()
+
+    def determine_metric_value(
+            self, data_source: list[list[str]],
+            table: EvaluationTable,
+            value: list[float]) -> float:
+        if data_source == table.average_data:
+            self.average_metrics[type(table)].extend(value)
+            return statistics.mean(self.average_metrics[type(table)])
+        elif data_source == table.min_data:
+            self.min_metrics[type(table)].extend(value)
+            return min(self.min_metrics[type(table)])
+        elif data_source == table.max_data:
+            self.max_metrics[type(table)].extend(value)
+            return max(self.max_metrics[type(table)])
+
+    def refresh_metric_cache(self) -> None:
+        print("==> Refreshing metric cache.")
+        for cache in [
+            self.average_metrics,
+            self.min_metrics,
+            self.max_metrics
+        ]:
+            for table in cache:
+                cache[table].clear()
 
 
 class TableSection(str, enum.Enum):
@@ -126,12 +227,17 @@ class TableSection(str, enum.Enum):
 
 @dataclasses.dataclass
 class EvaluationTable(abc.ABC):
-    data: list[list[str]] = dataclasses.field(default_factory=list)
+    average_data: list[list[str]] \
+        = dataclasses.field(default_factory=list)
+    min_data: list[list[str]] \
+        = dataclasses.field(default_factory=list)
+    max_data: list[list[str]] \
+        = dataclasses.field(default_factory=list)
     column_labels: typing.Final[list[str]] \
         = dataclasses.field(
         default_factory=lambda: [
             f"2^{{{database_size}}}"
-            for database_size in range(10, 31, 2)
+            for database_size in range(10, 31)
         ]
     )
     row_labels: typing.Final[list[str]] \
@@ -142,9 +248,41 @@ class EvaluationTable(abc.ABC):
         ]
     )
 
+    def __post_init__(self):
+        self.average_data = [
+            ["NA" for _ in range(len(self.row_labels))]
+            for _ in range(len(self.column_labels))
+        ]
+        self.min_data = [
+            ["NA" for _ in range(len(self.row_labels))]
+            for _ in range(len(self.column_labels))
+        ]
+        self.max_data = [
+            ["NA" for _ in range(len(self.row_labels))]
+            for _ in range(len(self.column_labels))
+        ]
+
+    @property
+    def metric_types(self) -> list[str]:
+        return ["Average", "Min", "Max"]
+
+    @property
+    def metric_packet(self) -> list[list[list[str]]]:
+        return [
+            self.average_data, self.min_data, self.max_data
+        ]
+
     @property
     def label(self) -> str:
         return f"tab:{self.title.lower().replace(' ', '_')}"
+
+    @property
+    def latex_tables(self) -> list[str]:
+        dataframes = self.retrieve_padded_dataframe()
+        return [
+            df.to_latex(caption=f"[{name}] {self.title} ({self.unit})", label=self.label)
+            for name, df in zip(self.metric_types, dataframes)
+        ]
 
     @property
     @abc.abstractmethod
@@ -161,42 +299,75 @@ class EvaluationTable(abc.ABC):
     def unit(self) -> str:
         pass
 
-    def __str__(self) -> str:
-        df = self.retrieve_padded_dataframe()
-        return df.to_latex(caption=f"{self.title} ({self.unit})", label=self.label)
+    def __hash__(self) -> int:
+        return hash(self.__class__.__name__)
 
-    def _retrieve_data_column_map(self) -> dict[str, list[str]]:
-        column_map = dict()
-        for column_index, column_label in enumerate(self.column_labels):
-            column_map[column_label] = self.data[column_index].copy() \
-                if column_index < len(self.data) else []
-        return column_map
+    def __eq__(self, other: typing.Self) -> bool:
+        return self.__class__.__name__ == other.__class__.__name__
+
+    def _retrieve_data_column_map(self) -> list[dict[str, list[str]]]:
+        packet: list[dict[str, list[str]]] = list()
+        for data in self.metric_packet:
+            column_map = dict()
+            for column_index, column_label in enumerate(self.column_labels):
+                column_map[column_label] = data[column_index].copy() \
+                    if column_index < len(data) else []
+            packet.append(column_map)
+        return packet
 
     def _pad_rows(self, out_data: dict[str, list[str]]) -> dict[str, list[str]]:
         for column_name, column in out_data.items():
             # Lengthen the columns to be of row size.
-            out_data[column_name].extend(["0"] * (len(self.row_labels) - len(column)))
+            out_data[column_name].extend(["NA"] * (len(self.row_labels) - len(column)))
         return out_data
 
-    def retrieve_padded_dataframe(self) -> pd.DataFrame:
-        df_data = self._retrieve_data_column_map()
-        self._pad_rows(df_data)
-        return pd.DataFrame(df_data, index=self.row_labels)
+    def retrieve_padded_dataframe(self) -> list[pd.DataFrame]:
+        dataframes: list[pd.DataFrame] = list()
+        for data in self._retrieve_data_column_map():
+            self._pad_rows(data)
+            dataframes.append(pd.DataFrame(data, index=self.row_labels))
+        return dataframes
 
     def write_latex_table(self) -> None:
         with open(f"./Latex_Tables/{self.title.replace(' ', '_')}.tex", "w") as file:
-            file.write(str(self))
+            file.write("\n\n".join(self.latex_tables))
 
     def render(self, show: bool = False, save_to_file: bool = True) -> None:
-        df = self.retrieve_padded_dataframe()
-        fig, ax = plt.subplots(figsize=(12, 2))
-        ax.axis('off')
-        ax.axis('tight')
-        ax.set_title(f"{self.section} - {self.title} ({self.unit})")
-        ax.table(cellText=df.values, colLabels=df.columns, rowLabels=df.index, loc='center')
+        dataframes = self.retrieve_padded_dataframe()
+        num_tables = len(dataframes)
+        total_fig_height = num_tables * 3.5
+        fig, axs = plt.subplots(num_tables, 1, figsize=(35, total_fig_height))
+        if num_tables == 1:
+            axs = [axs]
+        fig.patch.set_facecolor("#FAF5FF")
+        for ax, metric_type, df in zip(axs, self.metric_types, dataframes):
+            ax.axis('off')
+            ax.axis('tight')
+            ax.set_facecolor("#FAF5FF")
+            font_prop = matplotlib.font_manager.FontProperties(family="Inter", weight="bold")
+            ax.set_title(
+                f"{self.section} - {self.title} ({self.unit}) - {metric_type}", fontproperties=font_prop)
+            ax.title.set_fontsize(20)
+            table = ax.table(cellText=df.values, colLabels=df.columns, rowLabels=df.index, loc='center')
+            for (i, j), cell in table.get_celld().items():
+                text: str = cell.get_text().get_text()
+                column_or_row_header: bool = i == 0 or j == -1
+                if column_or_row_header:
+                    cell.set_facecolor("#E4CCFF")
+                    cell.get_text().set_fontproperties(font_prop)
+                elif text == "NA":
+                    cell.set_facecolor("#E7DCF1")
+                elif "Code" in text:
+                    cell.set_facecolor("#E7C0DC")
+                else:
+                    cell.set_facecolor("#F4EAFF")
+                cell.set_edgecolor('#B3A3C9')
+            table.set_fontsize(16)
+            table.scale(1, 2.5)
+        fig.subplots_adjust(hspace=20.0)
         fig.tight_layout()
         if save_to_file:
-            plt.savefig(f"./Figures/{self.title.replace(' ', '_')}.png")
+            plt.savefig(f"./Figures/{self.title.replace(' ', '_')}.png", dpi=450)
         if show:
             plt.show()
         plt.close()
@@ -353,79 +524,140 @@ def derive_total_database_size(q: int, h: float) -> int:
     return math.ceil(q * ((q ** h) - 1) / (q - 1))
 
 
-def read_directory(directory) -> dict[str, str]:
-    filename_to_content_map = dict()
-    for filename in os.listdir(directory):
-        if filename == "Meta":
-            continue
-        filepath = os.path.join(directory, filename)
-        if os.path.isfile(filepath):
-            with open(filepath, 'r') as file:
-                filename_to_content_map[filename] = file.read()
-    return filename_to_content_map
+def calculate_n(q: int, h: float) -> int:
+    """
+    Calculate the number of leaves in a tree based on
+    q and h.
+    :param q: Q-value of a q-ary tree.
+    :param h: Height of the tree.
+    :return: The number of leaves in the tree.
+    """
+    return q ** h
 
 
-def parse_database_configuration(configuration: str) -> tuple[str, list[int, int]]:
+def parse_spiral_configuration(configuration: str) -> tuple[str, list[int, int]]:
     configuration_file = f"./../Documents/Configuration/{configuration}.config"
     with open(configuration_file, "r") as file:
         lines = file.readlines()
     build_configuration: str = lines[1].strip()
     FurtherDims = FoldDims = int
     program_arguments: list[FurtherDims, FoldDims] = \
-        [int(number)
-         for number in lines[4].split()
-         if number.isdigit()][:2]
+        [int(argument)
+         for argument in lines[4].split()
+         if argument.isdigit()][:2]
+    assert len(program_arguments) == 2, \
+        f"Expected 2 program arguments, read {len(program_arguments)}."
     return build_configuration, program_arguments
 
 
-def evaluate_run(evaluator: Evaluation, n: int) -> None:
-    assert n in range(10, 31, 2), f"n={n} not in range(10, 31, 2)"
-    n_column_index = range(10, 31, 2).index(n)
-    for metric, value in read_directory(evaluator.data_path).items():
-        table = evaluator.evaluation_table_map[metric]
-        try:
-            table.data[n_column_index].append(value)
-        except IndexError:
-            table.data.append([value])
-        table.render(show=False)
-        table.write_latex_table()
+def parse_index_file(file_path) -> dict[str, list[int]]:
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+    trial_configuration = dict()
+    for line in lines:
+        parts = line.split(';')
+        if len(parts) != 3:
+            continue
+        data_file = parts[0].strip()
+        index_arg = parts[2].strip()
+        index = int(index_arg.split(':')[1].strip())
+        if data_file in trial_configuration:
+            trial_configuration[data_file].append(index)
+        else:
+            trial_configuration[data_file] = [index]
+    return trial_configuration
 
 
-def run_spiral_trials() -> None:
+def find_color_indices_files(directory) -> list[str]:
+    matching_files: list[str] = list()
+    for filename in os.listdir(directory):
+        if filename.startswith('color_indices_') and filename.endswith('.txt'):
+            matching_files.append(filename)
+    return matching_files
+
+
+def run_spiral_instance(
+        N_power: int, element_size: int, database_file: str,
+        clean_build: bool) -> int:
+    spiral_configuration_label: str = f"{N_power}_{element_size}"
+    parameter_set, program_arguments \
+        = parse_spiral_configuration(spiral_configuration_label)
+    cmake_configuration = CMakeConfiguration(
+        spiral_configuration_label, "Release")
+    target = SpiralTarget.SEPERATED
+    execution_instance = CMakeRun(
+        cmake_configuration,
+        CMakeBuild(
+            parameter_set, cmake_configuration.build_path,
+            target),
+        executable=target,
+        database_file=database_file,
+        further_dimensions=program_arguments[0],
+        folding_factor=program_arguments[1],
+        perform_build=clean_build
+    )
+    print(f"\nExecuting command: {execution_instance.generate_command()}")
+    exit_code: int = execution_instance.run()
+    return exit_code
+
+
+def inject_query_indices(query_indices: list[int]) -> None:
+    query_storage_file = "./../Query_Storage/Default.query"
+    with open(query_storage_file, "w") as file:
+        for index in query_indices:
+            file.write(f"{index}\n")
+
+
+def run_all_samples() -> None:
+    evaluator: typing.Final = Evaluate()
     element_size: typing.Final = 32
-    evaluator = Evaluation()
-    for n in range(10, 31, 2):
-        for q in [2, 16, 128, 256]:
-            h = calculate_height(q, n)
+    index_directory: typing.Final = "../Database/Evaluation/Indices"
+    index_files: typing.Final[list[str]] \
+        = find_color_indices_files(index_directory)
+    height_range_over_q: typing.Final = {
+        2: range(10, 31),
+        16: range(2, 8),
+        128: range(2, 5),
+        256: range(2, 4)
+    }
+    for q, height_range in height_range_over_q.items():
+        evaluator.refresh_metric_cache()
+        for h in height_range:
+            os.system("clear")
+            index_file = f"color_indices_{h}_{q}.txt"
+            if index_file not in index_files:
+                print(
+                    f"The requested index file for {q=}, {h=} does not exist.",
+                    file=sys.stderr)
+                continue
+            trial_configuration = parse_index_file(os.path.join(index_directory, index_file))
+
+            n = calculate_n(q, h)
+            n_power = math.ceil(math.log(n, 2))
             N = derive_total_database_size(q, h)
             N_power = math.ceil(math.log(N, 2))
-            if N_power > 30:
-                print("Unsupported database size.")
+            trial_log_information = f"2^{N_power} corresponding to {q=}, {h=}, {n=}, {n_power=}"
+            if N_power > 30 or N_power < 10:
+                print(f"Skipping unsupported database size {trial_log_information}.",
+                      file=sys.stderr)
                 continue
-            print(
-                "\n\n------------------------------------------------------------",
-                f"Running database size: 2^{N_power} with Q={q} and n={n}."
-            )
-            trial_configuration_label: str = f"{N_power}_{element_size}"
-            parameter_set, program_arguments \
-                = parse_database_configuration(trial_configuration_label)
-            cmake_configuration = CMakeConfiguration(
-                trial_configuration_label, "Release"
-            )
-            execution_instance = CMakeRun(
-                cmake_configuration,
-                CMakeBuild(
-                    parameter_set, cmake_configuration.build_path, "Seperated"
-                ),
-                executable="Seperated",
-                database_file="colorA_10.json",
-                further_dimensions=program_arguments[0],
-                folding_factor=program_arguments[1]
-            )
-            print(f"\nExecuting command: {execution_instance.generate_command()}")
-            execution_instance.run()
-            evaluate_run(evaluator, n)
+
+            clean_build: bool = True
+            for database_file, query_indices in trial_configuration.items():
+                if f"{h}_{q}" not in database_file:
+                    print(
+                        f"There is a mismatch between the requested database "
+                        f"file ({h=}, {q=}) and the index database {database_file}.",
+                        file=sys.stderr)
+                    continue
+                inject_query_indices(query_indices)
+                print("\n\n" + "#" * 100 + f"\n==> Injecting {len(query_indices)} query indices.")
+                print(f"==> Running database size: {trial_log_information}.")
+                exit_code: int = run_spiral_instance(N_power, element_size, database_file, clean_build)
+                evaluator.run(n_power, q, exit_code)
+                if exit_code == 0:
+                    clean_build = False
 
 
 if __name__ == "__main__":
-    run_spiral_trials()
+    run_all_samples()

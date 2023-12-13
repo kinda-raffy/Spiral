@@ -362,20 +362,20 @@ namespace Process {
         return processPath / std::filesystem::path(filename);
     }
 
-    const std::filesystem::path dataPath("../../Database_Data");
+    const std::filesystem::path dataPath("/tmp/Spiral/Database/Development");
     std::filesystem::path dataSpace(const std::string& filename) {
         return dataPath / std::filesystem::path(filename);
     }
 
     namespace Data {
         typedef boost::multi_index::multi_index_container<
-            std::string,
-            boost::multi_index::indexed_by<
-                boost::multi_index::hashed_unique<
-                    boost::multi_index::identity<std::string>
-                >,
-                boost::multi_index::sequenced<>
-            >
+                std::string,
+                boost::multi_index::indexed_by<
+                        boost::multi_index::hashed_unique<
+                                boost::multi_index::identity<std::string>
+                        >,
+                        boost::multi_index::sequenced<>
+                >
         > HashStore;
 
         // Note: const is only modified during load.
@@ -385,7 +385,7 @@ namespace Process {
             return hashes;
         }
 
-        void loadHashes(const std::filesystem::path& jsonFile) {
+        void useSIMDParser(const std::filesystem::path& jsonFile) {
             simdjson::ondemand::parser simdParser;
             auto jsonHash = simdjson::padded_string::load(jsonFile.c_str());
             auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
@@ -396,6 +396,36 @@ namespace Process {
                             static_cast<std::string_view>(hash.get_string())
                     );
                 }
+            }
+        }
+
+        void useInsertionPreservedParser(const std::filesystem::path& jsonFile) {
+            std::ifstream jsonFileStream(jsonFile);
+            nlohmann::ordered_json jsonData;
+            jsonFileStream >> jsonData;
+            auto& hashStoreRef = const_cast<HashStore&>(hashStore(true));
+            for (auto& element : jsonData[0].items()) {
+                std::string hash = element.value().get<std::string>();
+                std::transform(
+                        hash.begin(), hash.end(), hash.begin(),
+                        [](unsigned char c){ return std::tolower(c); }
+                );
+                hashStoreRef.get<Container::Sequence>().push_back(hash);
+            }
+        }
+
+        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = true) {
+            // [Note] Preserving insertion order tends to be notably
+            //        slower on large files, which may not be ideal
+            //        for development. Insertion order is only a requisite
+            //        for the final architecture integration.
+            Log::cout << "Hashes to be loaded in "
+                      << (insertionOrderLoad ? "insertion" : "non-insertion")
+                      << " order." << std::endl;
+            if (insertionOrderLoad) {
+                useInsertionPreservedParser(jsonFile);
+            } else {
+                useSIMDParser(jsonFile);
             }
         }
 
@@ -467,10 +497,6 @@ private: double determineCoefficientsPerCharacter() const {
             writeSurface = 1 / characterPerCoefficient;
         }
         assert(writeSurface > 0.0);
-        // Note: Extra coefficient required to encode '0' on smaller plaintexts.
-        if (plaintextModulus < hexadecimalRange) {
-            writeSurface += 1.0;
-        }
         return writeSurface;
     }
 };
@@ -910,10 +936,10 @@ void query_main(
 
 namespace HexToolkit {
     const char base16ToHex[16] = {
-            '0', '1', '2', '3',
-            '4', '5', '6', '7',
-            '8', '9', 'a', 'b',
-            'c', 'd', 'e', 'f'
+        '0', '1', '2', '3',
+        '4', '5', '6', '7',
+        '8', '9', 'a', 'b',
+        'c', 'd', 'e', 'f'
     };
 
     int hexCharToBase16(char hexChar) {
@@ -922,61 +948,25 @@ namespace HexToolkit {
         if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
         throw std::invalid_argument("Invalid hexadecimal character");
     }
-}
 
-void decodeBucketedRecord(const MatPoly& decodedMessage) {
-    const size_t hashLength = 64;
-    const size_t coefficientRange = p_db;
-    const size_t hexCharacterCount = 16;
-    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
-    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
-    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
-    if (coefficientRange < hexCharacterCount) {
-        characterWriteSpace += 1;
-    }
-    if (characterWriteSpace == 0) {
-        characterWriteSpace = 1;
-    }
-    size_t plaintextEncodingLength = decodedMessage.rows * decodedMessage.cols * coeff_count;
-    size_t messageEncodedLength = characterWriteSpace * hashLength;
-    assert(messageEncodedLength < plaintextEncodingLength);
-    std::stringstream decodedMessageStream;
-    if (characterWriteSpace == 1) {
-        for (size_t i = 0; i < messageEncodedLength; i++) {
-            decodedMessageStream << HexToolkit::base16ToHex[decodedMessage.data[i]];
-        }
-    } else {
-        for (size_t i = 0; i < messageEncodedLength; i += characterWriteSpace) {
-            size_t base16Sum = 0;
-            for (size_t j = 0; j < characterWriteSpace; j++) {
-                base16Sum += decodedMessage.data[i + j];
-            }
-            decodedMessageStream << HexToolkit::base16ToHex[base16Sum];
-        }
-    }
-    bool showMessageDump = false;
-    if (showMessageDump) {
-        Log::cout << "Message dump: \n" << std::endl;
-        bool allZeros = true;
-        for (size_t i = 0; i < decodedMessage.rows * decodedMessage.cols * coeff_count; i++) {
-            if (decodedMessage.data[i] != 0) {
-                allZeros = false;
-            }
-            std::cout << decodedMessage.data[i] << ",";
-        }
-        std::cout << std::endl << std::endl;
-        Log::cout << "Message is " << (allZeros ? "empty." : "NOT empty.") << std::endl;
-    }
-    Log::cout << "Decoded hash: " << UnixColours::MAGENTA
-              << decodedMessageStream.str() << UnixColours::RESET
-              << std::endl;
-    // Validate hash.
-    const bool hashExistsInFile = Process::Data::hashStore().find(decodedMessageStream.str()) !=
-                                  Process::Data::hashStore().end();
-    std::cout << "[" << UnixColours::MAGENTA << "Check"
-              << UnixColours::RESET << "] Hash is " << UnixColours::MAGENTA
-              << (hashExistsInFile ? "valid." : "invalid.")
-              << UnixColours::RESET << std::endl;
+    std::map<int, std::vector<int>> hexBase16ToBucketMap {
+        {0, {0, 0, 0, 0}},
+        {1, {0, 0, 0, 1}},
+        {2, {0, 0, 1, 1}},
+        {3, {0, 1, 1, 1}},
+        {4, {1, 1, 1, 1}},
+        {5, {1, 1, 1, 0}},
+        {6, {1, 1, 0, 0}},
+        {7, {1, 0, 0, 0}},
+        {8, {1, 0, 1, 0}},
+        {9, {1, 0, 0, 1}},
+        {10, {0, 1, 0, 1}},
+        {11, {0, 1, 1, 0}},
+        {12, {1, 0, 1, 1}},
+        {13, {1, 1, 0, 1}},
+        {14, {0, 0, 1, 0}},
+        {15, {0, 1, 0, 0}}
+    };
 }
 
 void decodePoly(MatPoly& decodedMessage, const size_t queryIndex) {
@@ -995,6 +985,19 @@ void decodePoly(MatPoly& decodedMessage, const size_t queryIndex) {
             assert(config.plaintextModulus == 256);
             auto [char1, char2] = unpackBit(decodedMessage.data[readHead]);
             decodedMessageStream << HexToolkit::base16ToHex[char1] << HexToolkit::base16ToHex[char2];
+        } else if (config.coefficientsPerCharacter > 1) {
+            std::vector<int> read_buckets;
+            for (size_t j = 0; j < static_cast<size_t>(config.coefficientsPerCharacter); j++) {
+                read_buckets.push_back(static_cast<int>(decodedMessage.data[readHead + j]));
+            }
+            for (const auto& [hexBase16, bucket] : HexToolkit::hexBase16ToBucketMap) {
+                if (bucket == read_buckets) {
+                    decodedMessageStream << HexToolkit::base16ToHex[hexBase16];
+                    break;
+                }
+            }
+            // [NOTE] Advance the read head to the start of the next character bucket.
+            readHead += static_cast<size_t>(config.coefficientsPerCharacter) - 1;
         }
     }
     bool showMessages = false;
@@ -1108,12 +1111,7 @@ void extract_main(
     }
     M_result = s_prod;  // M.
     GlobalTimer::stop("Performing C <- Decode(Z) operation to get the encoded message");
-
-    if (p_db == 4) {
-        decodeBucketedRecord(M_result);
-    } else {
-        decodePoly(M_result, queryIndex);
-    }
+    decodePoly(M_result, queryIndex);
 }
 
 void refreshWorkspaceDirectory() {
@@ -1140,6 +1138,7 @@ void clientExitStrategy(int signal) {
 }
 
 void runClient() {
+    system("pwd");
     std::signal(SIGINT, clientExitStrategy);
     std::signal(SIGTERM, clientExitStrategy);
     Log::cout << "Using " << DATA_FILENAME << " for verification." << std::endl;
@@ -1155,15 +1154,16 @@ void runClient() {
                   << UnixColours::RESET << "] "
                   << "Enter query index: " << std::flush;
         std::cin >> queryIndex;
+        const size_t loadedHashCount = Process::Data::hashStore().get<Container::Sequence>().size();
+        if (queryIndex < 0 or queryIndex >= loadedHashCount) {
+            std::cerr << "Query index is out of bounds." << std::endl;
+            continue;
+        }
         system("clear");
         Log::cout << "Retrieving hash for index " << UnixColours::MAGENTA
                   << queryIndex << UnixColours::RESET
                   << " from the database." << std::endl;
-        if (p_db != 4) {
-            IDX_TARGET = retrieveRecordIndex(queryIndex);
-        } else {
-            IDX_TARGET = queryIndex;
-        }
+        IDX_TARGET = retrieveRecordIndex(queryIndex);
         IDX_DIM0 = IDX_TARGET / (1 << further_dims);
         GlobalTimer::set("Fig.2: Query");
         query_main(S_Main, Sp_Main, sr_Query);

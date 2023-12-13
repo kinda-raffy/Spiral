@@ -198,7 +198,7 @@ The third argument is the name of the data file that contains a list of hashes
 in `json`. This is file name (`colorB_10.json`) and _not_ the file
 path (`Database_Data/colorB_10.json`). These data files are located in the
 `Database_Data` directory and a list of approapiate database sizes for each data
-file can be found in the [meta file](./Database_Data/META). The client requires
+file can be found in the [meta file](Database/META). The client requires
 the database file to verify the
 hashes received from the server are correct.
 

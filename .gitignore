@@ -5,8 +5,10 @@ real-run
 !.vscode/launch.json
 !.vscode/c_cpp_properties.json
 
+
 venv*/
 **/.venv*/
+Database/Evaluation/Data/*.json
 Process_Workspace/*.bin
 bin/
 *.bin

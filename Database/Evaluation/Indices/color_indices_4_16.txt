@@ -1,0 +1,50 @@
+colorA_4_16.json; NodeID: 6; Index: 5
+colorB_4_16.json; NodeID: 24357; Index: 14119
+colorC_4_16.json; NodeID: 1523; Index: 1760
+colorD_4_16.json; NodeID: 96; Index: 4364
+
+colorA_4_16.json; NodeID: 3657; Index: 12279
+colorB_4_16.json; NodeID: 15; Index: 8
+colorC_4_16.json; NodeID: 58500; Index: 13791
+colorD_4_16.json; NodeID: 229; Index: 14207
+
+colorA_4_16.json; NodeID: 7; Index: 6
+colorB_4_16.json; NodeID: 1793; Index: 17010
+colorC_4_16.json; NodeID: 28675; Index: 2136
+colorD_4_16.json; NodeID: 112; Index: 5460
+
+colorA_4_16.json; NodeID: 2494; Index: 4266
+colorB_4_16.json; NodeID: 10; Index: 3
+colorC_4_16.json; NodeID: 156; Index: 5263
+colorD_4_16.json; NodeID: 39901; Index: 9222
+
+colorA_4_16.json; NodeID: 2926; Index: 7078
+colorB_4_16.json; NodeID: 12; Index: 5
+colorC_4_16.json; NodeID: 46806; Index: 9792
+colorD_4_16.json; NodeID: 183; Index: 10936
+
+colorA_4_16.json; NodeID: 6; Index: 5
+colorB_4_16.json; NodeID: 23951; Index: 13743
+colorC_4_16.json; NodeID: 1497; Index: 1704
+colorD_4_16.json; NodeID: 94; Index: 4362
+
+colorA_4_16.json; NodeID: 2236; Index: 2523
+colorB_4_16.json; NodeID: 9; Index: 2
+colorC_4_16.json; NodeID: 140; Index: 3732
+colorD_4_16.json; NodeID: 35765; Index: 8086
+
+colorA_4_16.json; NodeID: 2; Index: 1
+colorB_4_16.json; NodeID: 7293; Index: 1855
+colorC_4_16.json; NodeID: 456; Index: 198
+colorD_4_16.json; NodeID: 29; Index: 7
+
+colorA_4_16.json; NodeID: 4186; Index: 15823
+colorB_4_16.json; NodeID: 17; Index: 10
+colorC_4_16.json; NodeID: 66964; Index: 17095
+colorD_4_16.json; NodeID: 262; Index: 16385
+
+colorA_4_16.json; NodeID: 3213; Index: 8990
+colorB_4_16.json; NodeID: 13; Index: 6
+colorC_4_16.json; NodeID: 201; Index: 9853
+colorD_4_16.json; NodeID: 51399; Index: 12170
+

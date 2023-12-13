@@ -1,0 +1,60 @@
+colorA_5_16.json; NodeID: 2; Index: 1
+colorB_5_16.json; NodeID: 100378; Index: 16655
+colorC_5_16.json; NodeID: 6274; Index: 60
+colorD_5_16.json; NodeID: 25; Index: 1
+colorE_5_16.json; NodeID: 393; Index: 309
+
+colorA_5_16.json; NodeID: 2634; Index: 71295
+colorB_5_16.json; NodeID: 11; Index: 4
+colorC_5_16.json; NodeID: 42130; Index: 87276
+colorD_5_16.json; NodeID: 165; Index: 125833
+colorE_5_16.json; NodeID: 674075; Index: 134981
+
+colorA_5_16.json; NodeID: 1102649; Index: 218616
+colorB_5_16.json; NodeID: 17; Index: 10
+colorC_5_16.json; NodeID: 68916; Index: 217007
+colorD_5_16.json; NodeID: 4308; Index: 218595
+colorE_5_16.json; NodeID: 270; Index: 209723
+
+colorA_5_16.json; NodeID: 6; Index: 5
+colorB_5_16.json; NodeID: 339150; Index: 152945
+colorC_5_16.json; NodeID: 83; Index: 18666
+colorD_5_16.json; NodeID: 21197; Index: 59475
+colorE_5_16.json; NodeID: 1325; Index: 55982
+
+colorA_5_16.json; NodeID: 6; Index: 5
+colorB_5_16.json; NodeID: 23631; Index: 174837
+colorC_5_16.json; NodeID: 1477; Index: 20719
+colorD_5_16.json; NodeID: 93; Index: 55929
+colorE_5_16.json; NodeID: 378097; Index: 63297
+
+colorA_5_16.json; NodeID: 3902; Index: 181733
+colorB_5_16.json; NodeID: 16; Index: 9
+colorC_5_16.json; NodeID: 62429; Index: 185050
+colorD_5_16.json; NodeID: 244; Index: 195737
+colorE_5_16.json; NodeID: 998856; Index: 203292
+
+colorA_5_16.json; NodeID: 4; Index: 3
+colorB_5_16.json; NodeID: 13696; Index: 84689
+colorC_5_16.json; NodeID: 54; Index: 9337
+colorD_5_16.json; NodeID: 219130; Index: 36886
+colorE_5_16.json; NodeID: 856; Index: 28153
+
+colorA_5_16.json; NodeID: 3343; Index: 132814
+colorB_5_16.json; NodeID: 13; Index: 6
+colorC_5_16.json; NodeID: 53486; Index: 145019
+colorD_5_16.json; NodeID: 855763; Index: 167438
+colorE_5_16.json; NodeID: 209; Index: 153802
+
+colorA_5_16.json; NodeID: 1070777; Index: 208238
+colorB_5_16.json; NodeID: 17; Index: 10
+colorC_5_16.json; NodeID: 4183; Index: 204850
+colorD_5_16.json; NodeID: 262; Index: 209720
+colorE_5_16.json; NodeID: 66924; Index: 221116
+
+colorA_5_16.json; NodeID: 3422; Index: 139793
+colorB_5_16.json; NodeID: 14; Index: 7
+colorC_5_16.json; NodeID: 54752; Index: 146263
+colorD_5_16.json; NodeID: 214; Index: 167777
+colorE_5_16.json; NodeID: 876024; Index: 180960
+

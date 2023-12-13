@@ -1,0 +1,50 @@
+colorA_4_128.json; NodeID: 2105809; Index: 67029653
+colorB_4_128.json; NodeID: 129; Index: 85
+colorC_4_128.json; NodeID: 16452; Index: 66847865
+colorD_4_128.json; NodeID: 269543548; Index: 67221622
+
+colorA_4_128.json; NodeID: 1641378; Index: 44569026
+colorB_4_128.json; NodeID: 101; Index: 57
+colorC_4_128.json; NodeID: 210096365; Index: 45101852
+colorD_4_128.json; NodeID: 12824; Index: 52312311
+
+colorA_4_128.json; NodeID: 39; Index: 38
+colorB_4_128.json; NodeID: 80768775; Index: 58735499
+colorC_4_128.json; NodeID: 631007; Index: 459427
+colorD_4_128.json; NodeID: 4930; Index: 19551211
+
+colorA_4_128.json; NodeID: 134042389; Index: 15800611
+colorB_4_128.json; NodeID: 64; Index: 20
+colorC_4_128.json; NodeID: 8182; Index: 15530198
+colorD_4_128.json; NodeID: 1047207; Index: 33210081
+
+colorA_4_128.json; NodeID: 870177; Index: 7166834
+colorB_4_128.json; NodeID: 54; Index: 10
+colorC_4_128.json; NodeID: 111382557; Index: 7847408
+colorD_4_128.json; NodeID: 6799; Index: 27477913
+
+colorA_4_128.json; NodeID: 2057693; Index: 64721572
+colorB_4_128.json; NodeID: 126; Index: 82
+colorC_4_128.json; NodeID: 16076; Index: 64479574
+colorD_4_128.json; NodeID: 263384583; Index: 65690537
+
+colorA_4_128.json; NodeID: 1928563; Index: 58502285
+colorB_4_128.json; NodeID: 118; Index: 74
+colorC_4_128.json; NodeID: 15067; Index: 58164125
+colorD_4_128.json; NodeID: 246856037; Index: 61566716
+
+colorA_4_128.json; NodeID: 34; Index: 33
+colorB_4_128.json; NodeID: 70025831; Index: 50613327
+colorC_4_128.json; NodeID: 547077; Index: 396325
+colorD_4_128.json; NodeID: 4275; Index: 16909083
+
+colorA_4_128.json; NodeID: 39; Index: 38
+colorB_4_128.json; NodeID: 625522; Index: 58209944
+colorC_4_128.json; NodeID: 4887; Index: 455354
+colorD_4_128.json; NodeID: 80066744; Index: 19901731
+
+colorA_4_128.json; NodeID: 33; Index: 32
+colorB_4_128.json; NodeID: 68818943; Index: 49930568
+colorC_4_128.json; NodeID: 537648; Index: 390960
+colorD_4_128.json; NodeID: 4201; Index: 16380816
+

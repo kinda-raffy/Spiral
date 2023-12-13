@@ -963,7 +963,7 @@ namespace Process {
         return processPath / std::filesystem::path(filename);
     }
 
-    const std::filesystem::path dataPath("../../Database_Data");
+    const std::filesystem::path dataPath("/tmp/Spiral/Database/Development");
     std::filesystem::path dataSpace(const std::string& filename) {
         return dataPath / std::filesystem::path(filename);
     }
@@ -1052,69 +1052,26 @@ namespace HexToolkit {
         if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
         throw std::invalid_argument("Invalid hexadecimal character");
     }
-}
 
-void generateBucketedPoly(MatPoly &M, const std::string& hash, const int iterationCount) {
-    assert(!M.isNTT);
-    size_t hashIterationPointer = 0;
-    const size_t hashLength = 64;
-    const size_t coefficientRange = p_db;
-    const size_t hexCharacterCount = 16;
-    assert(coefficientRange % hexCharacterCount == 0 or hexCharacterCount % coefficientRange == 0);
-    assert(coefficientRange == 4 or coefficientRange == 16 or coefficientRange == 256);
-    size_t characterWriteSpace = hexCharacterCount / coefficientRange;
-    if (coefficientRange < hexCharacterCount) {
-        characterWriteSpace += 1;
-    }
-    if (characterWriteSpace == 0) {
-        characterWriteSpace = 1;
-    }
-    const size_t coefficientSpace = M.rows * M.cols * poly_len;
-    const size_t totalWriteSpace = hashLength * characterWriteSpace;
-    assert(coefficientSpace > totalWriteSpace);
-    std::cout << "\r [" << iterationCount << "] Encoding "
-              << hash << " into polynomials under " << characterWriteSpace
-              << " coefficients/character." << std::flush;
-    if (characterWriteSpace == 1) {
-        for (size_t i = 0; i < coefficientSpace; i++) {
-            if (hashIterationPointer < hash.size()) {
-                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
-                assert(hex >= 0 && hex < 16);
-                M.data[i] = hex;
-            } else {
-                M.data[i] = 0;
-            }
-        }
-    } else {
-        int bucketMaxValue = static_cast<int>(coefficientRange) - 1;
-        for (size_t i = 0; i < coefficientSpace; i += characterWriteSpace) {
-            if (hashIterationPointer < hash.size()) {
-                int hex = HexToolkit::hexCharToBase16(hash.at(hashIterationPointer++));
-                // Perform bucketing.
-                for (size_t j = 0; j < characterWriteSpace; j++) {
-                    // Note: Redundant space is set to 0.
-                    int bucketValue = std::min(bucketMaxValue, hex);
-                    assert(bucketValue >= 0 or bucketValue < p_db);
-                    M.data[i + j] = bucketValue;
-                    hex -= bucketValue;
-                }
-                if (hex != 0) {
-                    throw std::runtime_error("Coefficient bucketing failed to accommodate hex value.");
-                }
-            } else {
-                for (size_t j = 0; j < characterWriteSpace; j++) {
-                    if ((i + j) < coefficientSpace) {
-                        M.data[i + j] = 0;
-                    }
-                }
-            }
-        }
-    }
-    if (hashIterationPointer != hashLength) {
-        throw std::runtime_error("Failed to encode entire hash into polynomial.");
-    }
+    std::map<int, std::vector<int>> hexBase16ToBucketMap {
+            {0, {0, 0, 0, 0}},
+            {1, {0, 0, 0, 1}},
+            {2, {0, 0, 1, 1}},
+            {3, {0, 1, 1, 1}},
+            {4, {1, 1, 1, 1}},
+            {5, {1, 1, 1, 0}},
+            {6, {1, 1, 0, 0}},
+            {7, {1, 0, 0, 0}},
+            {8, {1, 0, 1, 0}},
+            {9, {1, 0, 0, 1}},
+            {10, {0, 1, 0, 1}},
+            {11, {0, 1, 1, 0}},
+            {12, {1, 0, 1, 1}},
+            {13, {1, 1, 0, 1}},
+            {14, {0, 0, 1, 0}},
+            {15, {0, 1, 0, 0}}
+    };
 }
-
 
 template <typename T>
 bool isBiEvenlyDivisible(const T& a, const T& b) {
@@ -1167,10 +1124,6 @@ private: double determineCoefficientsPerCharacter() const {
             writeSurface = 1 / characterPerCoefficient;
         }
         assert(writeSurface > 0.0);
-        // Note: Extra coefficient required to encode '0' on smaller plaintexts.
-        if (plaintextModulus < hexadecimalRange) {
-            writeSurface += 1.0;
-        }
         return writeSurface;
     }
 };
@@ -1178,7 +1131,7 @@ private: double determineCoefficientsPerCharacter() const {
 void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
     std::cout << "\r [" << iterationCount
               << "] Encoding dummy value into remaining polynomials."
-              << std::string(80, ' ') << std::flush;
+              << std::string(100, ' ') << std::flush;
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
         assert(dummyValue >= 0 and dummyValue < p_db);
         M.data[i] = dummyValue;
@@ -1230,6 +1183,17 @@ size_t writeHashToPoly(
             } else if (config.plaintextModulus == 256) {
                 const int nextHexToWrite = HexToolkit::hexCharToBase16(hash.at(characterPointer++));
                 out.data[writeHead + coefficientIndex] = performBitPacking(hexToWrite, nextHexToWrite);
+            } else if (config.plaintextModulus == 4) {
+                if (HexToolkit::hexBase16ToBucketMap.find(hexToWrite) == HexToolkit::hexBase16ToBucketMap.end()) {
+                    throw std::runtime_error("Invalid hex character: " + std::to_string(hexToWrite));
+                }
+                const std::vector<int>& buckets = HexToolkit::hexBase16ToBucketMap[hexToWrite];
+                for (size_t bucketIndex = 0;
+                     bucketIndex < static_cast<size_t>(config.coefficientsPerCharacter); bucketIndex++) {
+                    out.data[writeHead + coefficientIndex + bucketIndex] = buckets[bucketIndex];
+                }
+                // [NOTE] Advance the coefficient index by the number of buckets written.
+                coefficientIndex += static_cast<size_t>(config.coefficientsPerCharacter) - 1;
             }
         }
     }
@@ -1243,7 +1207,6 @@ size_t writeHashToPoly(
 template <typename Iterator>
 void generatePackedPoly(MatPoly& out, Iterator& hashIterator, const size_t recordCount) {
     const PlaintextConversionConfig config(out);
-    assert(config.coefficientsPerCharacter <= 1);
     // Note: Socket is the number of coefficients required to store a single char.
     for (size_t socketIndex = 0; socketIndex < config.hashesPerPoly; socketIndex++) {
         const bool hashStoreExhausted = hashIterator ==
@@ -1346,13 +1309,7 @@ void load_db() {
         const bool hashStoreExhausted = hashesToLoadIterator ==
                                         Process::Data::hashStore().get<Container::Sequence>().end();
         if (!hashStoreExhausted) {
-            if (p_db == 4) {
-                generateBucketedPoly(pt_tmp, *hashesToLoadIterator, loadedPolyCount);
-                hashesToLoadIterator++;
-            } else {
-                generatePackedPoly(pt_tmp, hashesToLoadIterator, databaseRecordCount);
-                loadedPolyCount++;
-            }
+            generatePackedPoly(pt_tmp, hashesToLoadIterator, databaseRecordCount);
             loadedPolyCount++;
         } else {
             generatePaddedPoly(pt_tmp, databaseRecordCount);
@@ -2275,6 +2232,7 @@ void processExitStrategy(int signal) {
 }
 
 void runServer() {
+    system("pwd");
     std::signal(SIGINT, processExitStrategy);
     std::signal(SIGTERM, processExitStrategy);
     Log::cout << "Database assigned to " << DATA_FILENAME << "." << std::endl;

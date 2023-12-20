@@ -12,7 +12,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
     message("Release build.")
     # WARN: Change this to -O3 for release
     message(WARNING "The release build is not optimised (-O0).")
-    add_compile_options(-O0)
+    add_compile_options(-O3)
 elseif (CMAKE_BUILD_TYPE STREQUAL "Debug")
     message("Debug build.")
     add_compile_options(-O3)

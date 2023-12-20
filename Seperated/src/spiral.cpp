@@ -830,6 +830,8 @@ void multiplyQueryByDatabase(
         // static_assert(false, "No! Using AVX2 only! bad!");
         // __m256i mask_1 = _mm256_set1_epi64x(low_bits_mask_1);
         // __m256i mask_2 = _mm256_set1_epi64x(low_bits_mask_2);
+        std::cerr << "Using AVX2. Exiting." << std::endl;
+        exit(1);
 
         for (size_t z = 0; z < poly_len; z++) {
             size_t idx_a_base = z * (2*dim0*n1_padded);
@@ -968,6 +970,8 @@ void multiplyQueryByDatabase(
             }
         }
     #elif defined(NO_CRT) // incorrect
+        std::cerr << "Using NO_CRT. Exiting." << std::endl;
+        exit(1);
         for (size_t z = 0; z < poly_len; z++) {
             size_t idx_a_base = z * (2*dim0*n1_padded);
             size_t idx_b_base = z * (num_per * n2 * dim0 * n0);
@@ -1117,7 +1121,7 @@ namespace Process {
     // [DEBUG] const std::filesystem::path base("../../");
     const std::filesystem::path base("/tmp/Spiral");
     const std::filesystem::path processPath
-        = base / std::filesystem::path("Database/Evaluation/Data");
+        = base / std::filesystem::path("Database/PBC/Data");
     const std::filesystem::path queryStoragePath
         = base / std::filesystem::path("Query_Storage");
 
@@ -1172,7 +1176,7 @@ namespace Process {
             }
         }
 
-        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = false) {
+        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = true) {
             // [Note] Preserving insertion order tends to be notably
             //        slower on large files, which may not be ideal
             //        for development. Insertion order is only a requisite
@@ -1291,9 +1295,9 @@ namespace HexToolkit {
 }
 
 void generatePaddedPoly(MatPoly& M, const int iterationCount, const int dummyValue = 0) {
-    std::cout << "\r [" << iterationCount
+    /*std::cout << "\r [" << iterationCount
               << "] Encoding dummy value into remaining polynomials."
-              << std::string(100, ' ') << std::flush;
+              << std::string(100, ' ') << std::flush;*/
     for (size_t i = 0; i < M.rows * M.cols * poly_len; i++) {
         assert(dummyValue >= 0 and dummyValue < p_db);
         M.data[i] = dummyValue;
@@ -1306,10 +1310,10 @@ void logHashEncoding(
     const size_t hashCountInPoly,
     const PlaintextConversionConfig& config
 ) {
-    std::cout << "\r [" << recordCount << " | "
+    /*std::cout << "\r [" << recordCount << " | "
               << hashCountInPoly << "]" << (hashCountInPoly < 100 ? " ": "") << (recordCount < 100 ? " ": "") << " Encoding "
               << hash << " into polynomials under " << config.coefficientsPerCharacter
-              << " coefficients/character." << std::flush;
+              << " coefficients/character." << std::flush;*/
 }
 
 uint64_t performBitPacking(const uint8_t a, const uint8_t b) {
@@ -2192,6 +2196,7 @@ void answer_process_query_fast(
     // MARK: Process the first dimension.
     start_timing();
     GlobalTimer::set("Process first dimension via query-database multiplication");
+    Evaluation::set("Answer.server");
     multiplyQueryByDatabase(
             further_dims_locals.scratch_cts1,
             expansion_locals.reoriented_ciphertexts,
@@ -2220,6 +2225,7 @@ void answer_process_query_fast(
         );
         cur_dim++;
     }
+    Evaluation::stop("Answer.server");
     GlobalTimer::stop("Folding in subsequent dimensions");
     time_folding = end_timing();
     NativeLog::cout << "done folding" << endl;
@@ -3555,7 +3561,6 @@ void query_main(
 }
 
 void answer_main() {
-    Evaluation::set("Answer.server");
     // Initialize the server.
     size_t m = m2;
     size_t ell = m / n1;
@@ -3722,7 +3727,6 @@ void answer_main() {
     GlobalTimer::set("Rescale response via modulus switching");
     modswitch(furtherDimsLocals.result, furtherDimsLocals.cts);
     GlobalTimer::stop("Rescale response via modulus switching");
-    Evaluation::stop("Answer.server");
     // Save the rescaled response to a file.
     saveToFile(furtherDimsLocals, "response.bin");
     FurtherDimsLocals furtherDimsLocals_Load(num_per);
@@ -3914,6 +3918,23 @@ std::vector<int> loadQueryDirectory(const std::string& queryDirectory) {
 
 void runSeparationTest() {
     system("pwd");
+    #if defined(__AVX512F__)
+        std::cout << "AVX512F is enabled." << std::endl;
+    #else
+        std::cerr << "AVX512F is not enabled." << std::endl;
+    #endif
+    #if !defined(NO_CRT)
+        std::cout << "CRT is enabled." << std::endl;
+    #else
+        std::cerr << "CRT is not enabled. Please recompile with CRT enabled." << std::endl;
+        exit(1);
+    #endif
+    #if defined(__AVX2__)
+        std::cout << "AVX2 is enabled." << std::endl;
+    #else
+        std::cerr << "AVX2 is not enabled." << std::endl;
+    #endif
+
     PlaintextConversionConfig debug = PlaintextConversionConfig(2);
     std::signal(SIGINT, processExitStrategy);
     std::signal(SIGTERM, processExitStrategy);

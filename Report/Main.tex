@@ -1,0 +1,45 @@
+\documentclass{article}
+\usepackage[base]{babel}
+\usepackage{fontspec}
+\usepackage{graphicx}
+\usepackage{lipsum}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{adjustbox}
+\usepackage{float}
+
+
+\setlength{\parindent}{0pt}
+\newfontfamily\inter{Inter}[Weight=all]
+\setmainfont{Inter}
+
+\raggedright
+\setlength{\parskip}{10pt}
+
+\begin{document}
+
+% Title Page
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    {\Huge\textbf{Ethereum PIR - Spiral}} \\
+    \vspace{15cm}
+    {\Large \today} \\
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\input{./Content/Overview.tex}
+\newpage
+
+\input{./Content/Implementation.tex}
+\newpage
+
+\input{./Content/Experiments_and_Evaluation.tex}
+\newpage
+
+\bibliographystyle{plain}
+\bibliography{Spiral}
+
+\end{document}

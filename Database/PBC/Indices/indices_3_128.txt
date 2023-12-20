@@ -1,0 +1,60 @@
+PBC1_3_128.json; NodeID: 50; index: 30
+PBC2_3_128.json; NodeID: -1; index: 0
+PBC3_3_128.json; NodeID: 6354; index: 3809
+PBC4_3_128.json; NodeID: 813218; index: 488128
+PBC5_3_128.json; NodeID: -1; index: 0
+
+PBC1_3_128.json; NodeID: 3; index: 2
+PBC2_3_128.json; NodeID: -1; index: 0
+PBC3_3_128.json; NodeID: 33763; index: 20417
+PBC4_3_128.json; NodeID: 264; index: 164
+PBC5_3_128.json; NodeID: -1; index: 0
+
+PBC1_3_128.json; NodeID: -1; index: 0
+PBC2_3_128.json; NodeID: 25; index: 19
+PBC3_3_128.json; NodeID: 3078; index: 1845
+PBC4_3_128.json; NodeID: 393903; index: 236380
+PBC5_3_128.json; NodeID: -1; index: 0
+
+PBC1_3_128.json; NodeID: 14724; index: 8795
+PBC2_3_128.json; NodeID: 1884566; index: 1130291
+PBC3_3_128.json; NodeID: -1; index: 0
+PBC4_3_128.json; NodeID: 116; index: 73
+PBC5_3_128.json; NodeID: -1; index: 0
+
+PBC1_3_128.json; NodeID: 449705; index: 269924
+PBC2_3_128.json; NodeID: 28; index: 21
+PBC3_3_128.json; NodeID: -1; index: 0
+PBC4_3_128.json; NodeID: -1; index: 0
+PBC5_3_128.json; NodeID: 3514; index: 2091
+
+PBC1_3_128.json; NodeID: -1; index: 0
+PBC2_3_128.json; NodeID: 1703956; index: 1021942
+PBC3_3_128.json; NodeID: -1; index: 0
+PBC4_3_128.json; NodeID: 104; index: 66
+PBC5_3_128.json; NodeID: 13313; index: 8037
+
+PBC1_3_128.json; NodeID: 192; index: 117
+PBC2_3_128.json; NodeID: 2; index: 1
+PBC3_3_128.json; NodeID: -1; index: 0
+PBC4_3_128.json; NodeID: 24572; index: 14552
+PBC5_3_128.json; NodeID: -1; index: 0
+
+PBC1_3_128.json; NodeID: 62; index: 37
+PBC2_3_128.json; NodeID: 7821; index: 4660
+PBC3_3_128.json; NodeID: -1; index: 0
+PBC4_3_128.json; NodeID: 1001070; index: 600890
+PBC5_3_128.json; NodeID: -1; index: 0
+
+PBC1_3_128.json; NodeID: 1750867; index: 1050814
+PBC2_3_128.json; NodeID: -1; index: 0
+PBC3_3_128.json; NodeID: 13679; index: 8261
+PBC4_3_128.json; NodeID: -1; index: 0
+PBC5_3_128.json; NodeID: 107; index: 62
+
+PBC1_3_128.json; NodeID: -1; index: 0
+PBC2_3_128.json; NodeID: 341609; index: 204907
+PBC3_3_128.json; NodeID: 21; index: 11
+PBC4_3_128.json; NodeID: 2669; index: 1633
+PBC5_3_128.json; NodeID: -1; index: 0
+

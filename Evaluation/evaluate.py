@@ -171,8 +171,8 @@ class Evaluate:
         }
 
     def run(self, n_power: int, q: int, exit_code: int) -> None:
-        assert n_power in range(10, 31), f"{n_power=} not in range of n."
-        n_column_index = range(10, 31).index(n_power)
+        assert n_power in range(10, 25), f"{n_power=} not in range of n."
+        n_column_index = range(10, 25).index(n_power)
         q_row_index = [2, 16, 128, 256].index(q)
         print(f"==> Evaluating {n_power=} and {q=}.")
         for metric_name, metric_packet in self.read_metric_files().items():
@@ -237,7 +237,7 @@ class EvaluationTable(abc.ABC):
         = dataclasses.field(
         default_factory=lambda: [
             f"2^{{{database_size}}}"
-            for database_size in range(10, 31)
+            for database_size in range(10, 25)
         ]
     )
     row_labels: typing.Final[list[str]] \
@@ -571,7 +571,7 @@ def parse_index_file(file_path) -> dict[str, list[int]]:
 def find_color_indices_files(directory) -> list[str]:
     matching_files: list[str] = list()
     for filename in os.listdir(directory):
-        if filename.startswith('color_indices_') and filename.endswith('.txt'):
+        if filename.startswith('indices_') and filename.endswith('.txt'):
             matching_files.append(filename)
     return matching_files
 
@@ -608,23 +608,43 @@ def inject_query_indices(query_indices: list[int]) -> None:
             file.write(f"{index}\n")
 
 
+def dummy_run() -> int:
+    import random
+    evaluation_data_path = "./Data"
+    for filename in os.listdir(evaluation_data_path):
+        if filename == "Meta":
+            continue
+        filepath = os.path.join(evaluation_data_path, filename)
+        if os.path.isfile(filepath):
+            with open(filepath, "w") as file:
+                for line_number in range(3):
+                    if line_number == 0:
+                        dummy_averages = [random.randint(0, 100) for _ in range(4)]
+                        file.write(" ".join([str(value) for value in dummy_averages]) + "\n")
+                    else:
+                        file.write(f"{random.randint(0, 100)}\n")
+    return 0
+
+
 def run_all_samples() -> None:
     evaluator: typing.Final = Evaluate()
     element_size: typing.Final = 32
-    index_directory: typing.Final = "../Database/Evaluation/Indices"
+    index_directory: typing.Final = "../Database/PBC/Indices"
     index_files: typing.Final[list[str]] \
         = find_color_indices_files(index_directory)
     height_range_over_q: typing.Final = {
-        2: range(10, 31),
-        16: range(2, 8),
-        128: range(2, 5),
+        2: range(10, 25),
+        16: range(2, 7),
+        128: range(2, 4),
         256: range(2, 4)
     }
     for q, height_range in height_range_over_q.items():
-        evaluator.refresh_metric_cache()
         for h in height_range:
-            os.system("clear")
-            index_file = f"color_indices_{h}_{q}.txt"
+            q = 256
+            h = 2
+            evaluator.refresh_metric_cache()
+            # os.system("clear")
+            index_file = f"indices_{h}_{q}.txt"
             if index_file not in index_files:
                 print(
                     f"The requested index file for {q=}, {h=} does not exist.",
@@ -653,10 +673,13 @@ def run_all_samples() -> None:
                 inject_query_indices(query_indices)
                 print("\n\n" + "#" * 100 + f"\n==> Injecting {len(query_indices)} query indices.")
                 print(f"==> Running database size: {trial_log_information}.")
+                print(f"==> Running database file: {database_file}.")
                 exit_code: int = run_spiral_instance(N_power, element_size, database_file, clean_build)
+                # exit_code: int = dummy_run()
                 evaluator.run(n_power, q, exit_code)
                 if exit_code == 0:
                     clean_build = False
+        exit(0)
 
 
 if __name__ == "__main__":

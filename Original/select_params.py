@@ -366,8 +366,8 @@ def make_for(params):
     cmd = cmd_mk(vals)
     if not args.quiet:
         print(cmd)
-    s = subprocess.check_output(cmd, shell=True)
-    return s
+    #s = subprocess.check_output(cmd, shell=True)
+    return 0 #s
 
 command_base = "./spiral"
 command_opts_incorr = "a --random-data"
@@ -377,6 +377,7 @@ def run_spiral(nu_1, nu_2, opts):
     total_N = 2**(nu_1 + nu_2)
     ridx = random.randint(0, total_N-1)
     cmd_str = f"{command_base} {nu_1} {nu_2} {ridx} {opts}"
+    print(f"{cmd_str=}")
     if high_rate:
         cmd_str += " --high-rate"
     s = subprocess.check_output(cmd_str, shell=True)

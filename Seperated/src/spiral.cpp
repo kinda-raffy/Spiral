@@ -72,6 +72,7 @@ namespace NativeLog {
 }
 #endif
 
+#ifdef LOG
 namespace Log {
     struct Cout {
         std::ostringstream oss;
@@ -93,6 +94,20 @@ namespace Log {
     };
     Cout cout;
 }
+#else
+namespace Log {
+    struct Cout {
+        template<class T>
+        Cout& operator<<(const T& val) {
+            return *this;
+        }
+        Cout& operator<<(std::ostream& (*manipulator)(std::ostream&)) {
+            return *this;
+        }
+    };
+    Cout cout;
+}
+#endif
 
 void get_gadget_1(MatPoly &G) { // n0 x m1
     // identity
@@ -830,8 +845,8 @@ void multiplyQueryByDatabase(
         // static_assert(false, "No! Using AVX2 only! bad!");
         // __m256i mask_1 = _mm256_set1_epi64x(low_bits_mask_1);
         // __m256i mask_2 = _mm256_set1_epi64x(low_bits_mask_2);
-        std::cerr << "Using AVX2. Exiting." << std::endl;
-        exit(1);
+        // std::cerr << "Using AVX2. Exiting." << std::endl;
+        // exit(1);
 
         for (size_t z = 0; z < poly_len; z++) {
             size_t idx_a_base = z * (2*dim0*n1_padded);
@@ -1121,7 +1136,7 @@ namespace Process {
     // [DEBUG] const std::filesystem::path base("../../");
     const std::filesystem::path base("/tmp/Spiral");
     const std::filesystem::path processPath
-        = base / std::filesystem::path("Database/PBC/Data");
+        = base / std::filesystem::path("Database/Colouring/Data");
     const std::filesystem::path queryStoragePath
         = base / std::filesystem::path("Query_Storage");
 
@@ -1176,7 +1191,7 @@ namespace Process {
             }
         }
 
-        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = true) {
+        void loadHashes(const std::filesystem::path& jsonFile, const bool insertionOrderLoad = false) {
             // [Note] Preserving insertion order tends to be notably
             //        slower on large files, which may not be ideal
             //        for development. Insertion order is only a requisite
@@ -1246,7 +1261,8 @@ private: double determineCoefficientsPerCharacter() const {
         assert(isBiEvenlyDivisible(plaintextModulus, hexadecimalRange));
         double writeSurface = -1.0;
         if (plaintextModulus <= hexadecimalRange) {
-            writeSurface = static_cast<double>(hexadecimalRange) / static_cast<double>(plaintextModulus);
+            // writeSurface = static_cast<double>(hexadecimalRange) / static_cast<double>(plaintextModulus);
+            writeSurface = 2;  // [DEBUG] For p = 4.
         } else if (plaintextModulus > hexadecimalRange) {
             double bitCount = log2(plaintextModulus);
             // Note: 16 hex characters can be represented in 4-bits.
@@ -1263,8 +1279,8 @@ namespace HexToolkit {
     const char base16ToHex[16] = {
         '0', '1', '2', '3',
         '4', '5', '6', '7',
-        '8', '9', 'a', 'b',
-        'c', 'd', 'e', 'f'
+        '8', '9', 'A', 'B',
+        'C', 'D', 'E', 'F'
     };
 
     int hexCharToBase16(char hexChar) {
@@ -1275,22 +1291,22 @@ namespace HexToolkit {
     }
 
     std::map<int, std::vector<int>> hexBase16ToBucketMap {
-            {0, {0, 0, 0, 0}},
-            {1, {0, 0, 0, 1}},
-            {2, {0, 0, 1, 1}},
-            {3, {0, 1, 1, 1}},
-            {4, {1, 1, 1, 1}},
-            {5, {1, 1, 1, 0}},
-            {6, {1, 1, 0, 0}},
-            {7, {1, 0, 0, 0}},
-            {8, {1, 0, 1, 0}},
-            {9, {1, 0, 0, 1}},
-            {10, {0, 1, 0, 1}},
-            {11, {0, 1, 1, 0}},
-            {12, {1, 0, 1, 1}},
-            {13, {1, 1, 0, 1}},
-            {14, {0, 0, 1, 0}},
-            {15, {0, 1, 0, 0}}
+            {0, {0, 0}},
+            {1, {0, 1}},
+            {2, {0, 2}},
+            {3, {0, 3}},
+            {4, {1, 0}},
+            {5, {1, 1}},
+            {6, {1, 2}},
+            {7, {1, 3}},
+            {8, {2, 0}},
+            {9, {2, 1}},
+            {10, {2, 2}},
+            {11, {2, 3}},
+            {12, {3, 0}},
+            {13, {3, 1}},
+            {14, {3, 2}},
+            {15, {3, 3}}
     };
 }
 
@@ -3935,7 +3951,6 @@ void runSeparationTest() {
         std::cerr << "AVX2 is not enabled." << std::endl;
     #endif
 
-    PlaintextConversionConfig debug = PlaintextConversionConfig(2);
     std::signal(SIGINT, processExitStrategy);
     std::signal(SIGTERM, processExitStrategy);
     Log::cout << "Plaintext modulus is " << p_db
@@ -3946,8 +3961,8 @@ void runSeparationTest() {
     setup_main(S_Main, Sp_Main, sr_Query);
     GlobalTimer::stop("Fig.2: Setup");
 
-    std::vector<int> queryIndexes = loadQueryDirectory(Process::queryStoragePath);
     Log::cout << "Database will load from " << DATA_FILENAME << "." << std::endl;
+    std::vector<int> queryIndexes = loadQueryDirectory(Process::queryStoragePath);
     Process::Data::loadHashes(Process::dataSpace(DATA_FILENAME));
     GlobalTimer::set("Database Generation");
     Evaluation::set("Database_Generation.server");
@@ -3976,6 +3991,18 @@ void runSeparationTest() {
         system("clear");
     }
     Evaluation::writeMetrics();
+    PlaintextConversionConfig logConfig = PlaintextConversionConfig(n0);
+    std::cout << "Evaluation on core " << sched_getcpu() << " is complete." << std::endl;
+    std::cout << "\nRun properties" << std::endl;
+    std::cout << "--------------" << std::endl;
+    std::cout << "Database filename: " << DATA_FILENAME << " with " << Process::Data::hashStore().get<Container::Sequence>().size() << " hashes." << std::endl;
+    std::cout << "Actual DB size: 2^" << num_expansions + further_dims
+              << " or " << total_n << " records which can store "
+              << logConfig.hashesPerPoly * total_n
+              << " hashes under " << logConfig.hashesPerPoly << " hashes per record." << std::endl;
+    std::cout << "Number of folds: " << num_expansions << "." << std::endl;
+    std::cout << "Further dimensions: " << further_dims << "." << std::endl;
+    std::cout << "Number of queries: " << queryIndexes.size() << "." << std::endl;
 }
 
 void populateConfigurations() {

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 import abc
+import sys
 import math
 import enum
-import sys
+import json
 import typing
 import statistics
 import dataclasses
@@ -12,6 +13,14 @@ import dataclasses
 import matplotlib.font_manager
 import pandas as pd
 import matplotlib.pyplot as plt
+
+
+class Mode(str, enum.Enum):
+    PBC = "PBC"
+    COLOURING = "Colouring"
+
+
+mode: typing.Final[Mode] = Mode.COLOURING
 
 
 @dataclasses.dataclass
@@ -22,8 +31,8 @@ class CMakeConfiguration:
         = "/home/ubuntu/vcpkg/scripts/buildsystems/vcpkg.cmake"
     build_directory_base_name: typing.Final[str] = "build"
     source_directory: typing.Final[os.PathLike] = "/tmp/Spiral"
-    use_log: typing.Literal["ON", "OFF"] = "ON"
-    use_timer_log: typing.Literal["ON", "OFF"] = "ON"
+    use_log: typing.Literal["ON", "OFF"] = "OFF"
+    use_timer_log: typing.Literal["ON", "OFF"] = "OFF"
     use_native_log: typing.Literal["ON", "OFF"] = "OFF"
 
     @property
@@ -191,7 +200,7 @@ class Evaluate:
                     data_source[n_column_index][q_row_index] = f"Code: {exit_code}"
                 else:
                     data_source[n_column_index][q_row_index] = f"{table_value:.3f}"
-            table.render(show=True)
+            # table.render(show=True)
             table.write_latex_table()
 
     def determine_metric_value(
@@ -209,7 +218,6 @@ class Evaluate:
             return max(self.max_metrics[type(table)])
 
     def refresh_metric_cache(self) -> None:
-        print("==> Refreshing metric cache.")
         for cache in [
             self.average_metrics,
             self.min_metrics,
@@ -367,7 +375,7 @@ class EvaluationTable(abc.ABC):
         fig.subplots_adjust(hspace=20.0)
         fig.tight_layout()
         if save_to_file:
-            plt.savefig(f"./Figures/{self.title.replace(' ', '_')}.png", dpi=450)
+            plt.savefig(f"./Figures/{self.title.replace(' ', '_')}.png", dpi=150)
         if show:
             plt.show()
         plt.close()
@@ -561,6 +569,8 @@ def parse_index_file(file_path) -> dict[str, list[int]]:
         data_file = parts[0].strip()
         index_arg = parts[2].strip()
         index = int(index_arg.split(':')[1].strip())
+        if mode == Mode.COLOURING:
+            index -= 1
         if data_file in trial_configuration:
             trial_configuration[data_file].append(index)
         else:
@@ -570,8 +580,10 @@ def parse_index_file(file_path) -> dict[str, list[int]]:
 
 def find_color_indices_files(directory) -> list[str]:
     matching_files: list[str] = list()
+    prefix: typing.Final = "color_indices_" \
+        if mode == Mode.COLOURING else "indices_"
     for filename in os.listdir(directory):
-        if filename.startswith('indices_') and filename.endswith('.txt'):
+        if filename.startswith(prefix) and filename.endswith(".txt"):
             matching_files.append(filename)
     return matching_files
 
@@ -626,11 +638,20 @@ def dummy_run() -> int:
     return 0
 
 
+def retrieve_file_hash_count(database_file: str) -> int:
+    database_directory = "./../Database/Colouring/Data" \
+        if mode == Mode.COLOURING else "./../Database/PBC/Data"
+    with open(os.path.join(database_directory, database_file), "r") as file:
+        content = file.readline()
+    return len(json.loads(content)[0])
+
+
 def run_all_samples() -> None:
     evaluator: typing.Final = Evaluate()
     element_size: typing.Final = 32
-    index_directory: typing.Final = "../Database/PBC/Indices"
-    index_files: typing.Final[list[str]] \
+    index_directory: typing.Final = "../Database/Colouring/Indices" \
+        if mode == Mode.COLOURING else "../Database/PBC/Indices"
+    all_index_files: typing.Final[list[str]] \
         = find_color_indices_files(index_directory)
     height_range_over_q: typing.Final = {
         2: range(10, 25),
@@ -640,47 +661,47 @@ def run_all_samples() -> None:
     }
     for q, height_range in height_range_over_q.items():
         for h in height_range:
-            q = 256
-            h = 2
             evaluator.refresh_metric_cache()
-            # os.system("clear")
-            index_file = f"indices_{h}_{q}.txt"
-            if index_file not in index_files:
-                print(
-                    f"The requested index file for {q=}, {h=} does not exist.",
-                    file=sys.stderr)
-                continue
-            trial_configuration = parse_index_file(os.path.join(index_directory, index_file))
-
-            n = calculate_n(q, h)
-            n_power = math.ceil(math.log(n, 2))
-            N = derive_total_database_size(q, h)
-            N_power = math.ceil(math.log(N, 2))
-            trial_log_information = f"2^{N_power} corresponding to {q=}, {h=}, {n=}, {n_power=}"
-            if N_power > 30 or N_power < 10:
-                print(f"Skipping unsupported database size {trial_log_information}.",
+            os.system("clear")
+            index_file = f"color_indices_{h}_{q}.txt" \
+                if mode == Mode.COLOURING else f"indices_{h}_{q}.txt"
+            if index_file not in all_index_files:
+                print(f"The requested index file for {h=}, {q=} does not exist.",
                       file=sys.stderr)
                 continue
+            trial_configuration = parse_index_file(os.path.join(index_directory, index_file))
 
             clean_build: bool = True
             for database_file, query_indices in trial_configuration.items():
                 if f"{h}_{q}" not in database_file:
-                    print(
-                        f"There is a mismatch between the requested database "
-                        f"file ({h=}, {q=}) and the index database {database_file}.",
-                        file=sys.stderr)
+                    print(f"There is a mismatch between the requested database "
+                          f"file ({h=}, {q=}) and the index database {database_file}.",
+                          file=sys.stderr)
                     continue
+
+                n = calculate_n(q, h)
+                n_power = math.ceil(math.log2(n))
+                N = derive_total_database_size(q, h) \
+                    if mode == Mode.COLOURING else retrieve_file_hash_count(database_file)
+                N_power = math.ceil(math.log2(N / h)) \
+                    if mode == Mode.COLOURING else math.ceil(math.log2(N))
+                trial_log_information = f"2^{N_power} corresponding to {q=}, {h=}, {n=}, {n_power=}"
+                if N_power > 30 or N_power < 1:
+                    print(f"Skipping unsupported database size {trial_log_information}.",
+                          file=sys.stderr)
+                    continue
+
                 inject_query_indices(query_indices)
                 print("\n\n" + "#" * 100 + f"\n==> Injecting {len(query_indices)} query indices.")
                 print(f"==> Running database size: {trial_log_information}.")
                 print(f"==> Running database file: {database_file}.")
-                exit_code: int = run_spiral_instance(N_power, element_size, database_file, clean_build)
-                # exit_code: int = dummy_run()
+                # exit_code: int = run_spiral_instance(N_power, element_size, database_file, clean_build)
+                exit_code: int = dummy_run()
                 evaluator.run(n_power, q, exit_code)
                 if exit_code == 0:
                     clean_build = False
-        exit(0)
 
 
 if __name__ == "__main__":
+    assert mode in Mode, f"{mode=} not in {Mode}."
     run_all_samples()

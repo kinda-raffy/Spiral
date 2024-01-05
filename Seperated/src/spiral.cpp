@@ -1260,9 +1260,11 @@ private: PlaintextConversionConfig() {
 private: double determineCoefficientsPerCharacter() const {
         assert(isBiEvenlyDivisible(plaintextModulus, hexadecimalRange));
         double writeSurface = -1.0;
-        if (plaintextModulus <= hexadecimalRange) {
+        if (plaintextModulus < hexadecimalRange) {
             // writeSurface = static_cast<double>(hexadecimalRange) / static_cast<double>(plaintextModulus);
-            writeSurface = 2;  // [DEBUG] For p = 4.
+            writeSurface = 2;
+        } else if (plaintextModulus == hexadecimalRange) {
+            writeSurface = 1;
         } else if (plaintextModulus > hexadecimalRange) {
             double bitCount = log2(plaintextModulus);
             // Note: 16 hex characters can be represented in 4-bits.

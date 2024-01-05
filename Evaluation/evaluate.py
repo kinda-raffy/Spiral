@@ -65,7 +65,7 @@ class CMakeBuild:
     parameter_set: str
     build_path: str
     target: SpiralTarget
-    core_count: int = 126
+    core_count: int = 6
     verbose: bool = True
 
     def __str__(self) -> str:
@@ -200,7 +200,7 @@ class Evaluate:
                     data_source[n_column_index][q_row_index] = f"Code: {exit_code}"
                 else:
                     data_source[n_column_index][q_row_index] = f"{table_value:.3f}"
-            # table.render(show=True)
+            table.render(show=True)
             table.write_latex_table()
 
     def determine_metric_value(
@@ -375,7 +375,7 @@ class EvaluationTable(abc.ABC):
         fig.subplots_adjust(hspace=20.0)
         fig.tight_layout()
         if save_to_file:
-            plt.savefig(f"./Figures/{self.title.replace(' ', '_')}.png", dpi=150)
+            plt.savefig(f"./Figures/{self.title.replace(' ', '_')}.png", dpi=450)
         if show:
             plt.show()
         plt.close()
@@ -655,7 +655,7 @@ def run_all_samples() -> None:
         = find_color_indices_files(index_directory)
     height_range_over_q: typing.Final = {
         2: range(10, 25),
-        16: range(2, 7),
+        16: range(3, 7),
         128: range(2, 4),
         256: range(2, 4)
     }
@@ -695,8 +695,8 @@ def run_all_samples() -> None:
                 print("\n\n" + "#" * 100 + f"\n==> Injecting {len(query_indices)} query indices.")
                 print(f"==> Running database size: {trial_log_information}.")
                 print(f"==> Running database file: {database_file}.")
-                # exit_code: int = run_spiral_instance(N_power, element_size, database_file, clean_build)
-                exit_code: int = dummy_run()
+                exit_code: int = run_spiral_instance(N_power, element_size, database_file, clean_build)
+                # exit_code: int = dummy_run()
                 evaluator.run(n_power, q, exit_code)
                 if exit_code == 0:
                     clean_build = False
